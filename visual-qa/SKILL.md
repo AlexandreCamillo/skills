@@ -3,6 +3,13 @@ name: visual-qa
 description: Use when you need to audit UI/UX quality of a running app (Chromium CDP or Android adb). Exhaustively explores, records, and reports issues against a concrete design rubric. NEVER modifies code or commits. Accepts an optional scope argument.
 ---
 
+## Platform adaptation
+
+If you are running on **Gemini CLI**, read `references/gemini-tools.md` to translate
+tool names used in this skill to their Gemini equivalents before starting.
+
+If you are running on **Codex**, read `references/codex-tools.md` for the same mapping.
+
 <HARD-GATE>
 This skill MUST NOT:
 - Run `git commit`, `git add`, `git push`, `git stash`, or `git reset` except the single soft-reset described in step 11 below.

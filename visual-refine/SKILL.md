@@ -3,6 +3,13 @@ name: visual-refine
 description: Use when you need to transform a UI from "functional" to "spectacular" based on visual-qa findings. Runs visual-qa, writes a superpowers spec, plans, executes with sub-agents, loops until clean, then refactors and verifies. NEVER commits during the flow. Accepts scope and optional --report path.
 ---
 
+## Platform adaptation
+
+If you are running on **Gemini CLI**, read `references/gemini-tools.md` to translate
+tool names used in this skill to their Gemini equivalents before starting.
+
+If you are running on **Codex**, read `references/codex-tools.md` for the same mapping.
+
 <HARD-GATE>
 This skill MUST NOT:
 - Run `git commit`, `git add`, `git push`, `git commit --amend` during any phase.

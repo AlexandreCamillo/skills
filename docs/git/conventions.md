@@ -35,6 +35,7 @@ Use the component or file area being changed:
 | `design`       | Changes to `design-principles.md`                 |
 | `scripts`      | Changes to `scripts/`                             |
 | `docs`         | Changes to `docs/`                                |
+| `platform`     | Changes to `GEMINI.md`, `AGENTS.md`, or `CLAUDE.md`  |
 | `install`      | README install steps or runtime requirements      |
 
 ## Good vs Bad Examples

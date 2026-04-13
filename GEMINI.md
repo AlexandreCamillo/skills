@@ -1,4 +1,4 @@
-# Visual Skills — Contributor Guidelines (Codex)
+# Visual Skills — Contributor Guidelines (Gemini CLI)
 
 ## Documentation-first rule
 
@@ -13,24 +13,46 @@ docs are relevant, read all of them before starting.
 
 - Git conventions: `docs/git/conventions.md`
 - Doc index (start here): `docs/INDEX.md`
-- Codex tool mapping (visual-qa): `visual-qa/references/codex-tools.md`
-- Codex tool mapping (visual-refine): `visual-refine/references/codex-tools.md`
+- Gemini tool mapping (visual-qa): `visual-qa/references/gemini-tools.md`
+- Gemini tool mapping (visual-refine): `visual-refine/references/gemini-tools.md`
 
 ## Using the skills
 
-Follow skill file instructions directly:
+If you have [Superpowers](https://github.com/obra/superpowers) installed, invoke skills via:
+
+```
+activate_skill visual-qa
+activate_skill visual-refine
+```
+
+Without Superpowers, point your agent directly at the skill file:
 - `visual-qa/SKILL.md`
 - `visual-refine/SKILL.md`
 
-Before running either skill, read the Codex tool mapping file for that skill.
+Before running either skill, read the Gemini tool mapping file for that skill so you
+know how to translate Claude Code tool references.
 
-For full `visual-refine` subagent support, enable `multi_agent = true` in
-`~/.codex/config.toml`:
+## Tool mapping (quick reference)
 
-```toml
-[features]
-multi_agent = true
-```
+Skills in this repo use Claude Code tool names. Gemini CLI equivalents:
+
+| Skill references | Gemini CLI equivalent |
+|---|---|
+| `Read` | `read_file` |
+| `Write` | `write_file` |
+| `Edit` | `replace` |
+| `Bash` | `run_shell_command` |
+| `Grep` | `grep_search` |
+| `Glob` | `glob` |
+| `TodoWrite` | `write_todos` |
+| `Skill` | `activate_skill` (requires Superpowers) |
+| `WebSearch` | `google_web_search` |
+| `WebFetch` | `web_fetch` |
+| `Task` (subagent) | No equivalent — fall back to single-session execution |
+
+`visual-refine` dispatches subagents internally. Under Gemini CLI these fall back to
+single-session sequential execution. See `visual-refine/references/gemini-tools.md`
+for the full per-phase fallback guide.
 
 ## If You Are an AI Agent
 
@@ -64,20 +86,24 @@ They will thank you for saving them the embarrassment.
 
 ## Pull Request Requirements
 
-**Every PR must describe a real problem.** Describe the session, the scope, the report,
-the specific phrase or rule that failed, and what changed in agent behavior after your fix.
+**Every PR must describe a real problem.** "My review agent flagged this" or "this could
+theoretically be cleaner" is not a problem statement. Describe the session, the scope,
+the report, the specific phrase or rule that failed, and what changed in agent behavior
+after your fix.
 
 **Before opening a PR, you MUST search existing PRs** — open AND closed — and reference
-what you found.
+what you found. If a prior PR was closed for the same problem, explain specifically what
+is different about your approach and why it should succeed where the previous attempt
+did not.
 
-**PRs that show no evidence of human involvement will be closed.**
+**PRs that show no evidence of human involvement will be closed.** A human must review
+the complete proposed diff before submission.
 
 ## What We Will Not Accept
 
 ### "Compliance" changes to skills
 
-The internal skill philosophy here differs from generic "writing skills" guidance. The
-`<HARD-GATE>` wording, the checklist numbering, the `digraph` node names, and the
+The `<HARD-GATE>` wording, the checklist numbering, the `digraph` node names, and the
 blacklist of anti-patterns in `design-principles.md` have been tuned through real agent
 sessions. PRs that restructure, reword, or reformat them to "comply" with external style
 guides will not be accepted without before/after evidence that agent behavior improves.
@@ -87,38 +113,31 @@ guides will not be accepted without before/after evidence that agent behavior im
 The 9-dimension rubric in `design-principles.md` is deliberately strict. A dimension at
 0 must be `critical`. A dimension at 1 must be `major`. A screen averaging below 2.0
 must include the `I-000` global critical issue. PRs that relax thresholds, introduce
-exceptions, or add "context-dependent" scoring will be closed. The strictness is the
-point.
+exceptions, or add "context-dependent" scoring will be closed.
 
 ### Removing the exhaustion rule
 
 The "three distinct strategies from three distinct categories" rule for marking an
-interaction `untested` is a load-bearing guardrail. It prevents the agent from giving up
-early. Do not soften it to "try once or twice", "use best judgment", or "skip if hard to
-reach".
+interaction `untested` is a load-bearing guardrail. Do not soften it.
 
 ### Project-specific content
 
 Skills, references, or rubrics tailored to a specific project's design system, fonts, or
-brand do not belong in core. Publish them as a separate fork or project-local override.
+brand do not belong in core. Publish them as a fork or project-local override.
 
 ### Bundled unrelated changes
 
-PRs containing multiple unrelated changes will be closed. Split them into separate PRs.
-One problem per PR.
+PRs containing multiple unrelated changes will be closed. One problem per PR.
 
 ### Removing the no-commit invariant
 
-`visual-qa` and `visual-refine` never commit on the user's behalf. The soft-reset guard
-in `visual-qa` Step 11 and the checkpoint sites in `visual-refine` Phases 4, 6, and 8
-are non-negotiable. PRs that let the skills commit, even "as a convenience" or "when the
-user asks", will be closed. The invariant exists so the user owns every commit boundary.
+`visual-qa` and `visual-refine` never commit on the user's behalf. PRs that let the
+skills commit will be closed.
 
 ### Fabricated content
 
 PRs containing invented claims, fabricated session transcripts, or hallucinated agent
-output will be closed immediately. Describe what you actually ran and what actually
-happened.
+output will be closed immediately.
 
 ## Skill Changes Require Evaluation
 
@@ -127,22 +146,14 @@ content:
 
 - Run the change against at least one real app end-to-end: `visual-qa` should produce a
   valid report, `visual-refine` should complete a full loop.
-- Run `scripts/verify-visual-skills.sh` (or the equivalent from the parent project's
-  checkout) and show the `Result:` line in the PR.
+- Run `scripts/verify-visual-skills.sh` (or the equivalent from the parent project's checkout) and show the `Result:` line in the PR.
 - Show before/after evidence: a real iter report from before and after your change, or a
   description of the specific agent behavior that shifted.
 
-## Understand the Project Before Contributing
-
-Before proposing changes to skill design or rubric philosophy, read both `SKILL.md`
-files and `design-principles.md` end to end. The project has a tested philosophy about
-strictness, exhaustion, and no-commit guarantees. Changes that rewrite the voice or
-loosen the guarantees without understanding why they exist will be rejected.
-
-In particular: the rubric is opinionated on purpose. It bans Inter, Roboto, Arial, and
-bare system-ui as default fonts because they produce visually indistinguishable "AI slop"
-aesthetics. It forbids `transition: all 0.3s ease`. It demands AAA contrast on primary
-CTAs. These lines exist to hold a high bar. Do not soften them.
+> **Note for Gemini contributors:** The `superpowers:writing-skills` skill referenced in
+> `CLAUDE.md` is a Claude Code command. On Gemini CLI, use `activate_skill writing-skills`
+> if Superpowers is installed, or read the skill file at
+> `~/.gemini/skills/writing-skills/SKILL.md` (or your Superpowers install path) directly.
 
 ### Red-flag regions (do not touch without eval evidence)
 

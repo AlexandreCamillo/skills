@@ -1,6 +1,6 @@
 # Skills
 
-A growing collection of composable skills for Claude Code. Each skill is a focused, opinionated workflow that guides the agent through a specific type of task — from UI/UX audits to whatever comes next.
+A growing collection of composable skills for Claude Code, Gemini CLI, and Codex. Each skill is a focused, opinionated workflow that guides the agent through a specific type of task — from UI/UX audits to whatever comes next.
 
 ## Skill Sets
 
@@ -78,6 +78,48 @@ The agent should announce that it's using the `visual-qa` skill, probe for a tar
 
 A lightweight health-check script is included at `scripts/verify-visual-skills.sh`. It confirms that both `SKILL.md` files exist, parse as YAML, contain the required `<HARD-GATE>` and `digraph` markers, reference every sibling file, and that `design-principles.md` is byte-identical in both skills.
 
+**Gemini CLI**
+
+Copy the skill directories to wherever your Gemini CLI setup loads skills from, then
+read the tool mapping file before running a skill:
+
+```bash
+cp -r ~/projects/skills/visual-qa ~/.gemini/skills/
+cp -r ~/projects/skills/visual-refine ~/.gemini/skills/
+```
+
+If you have [Superpowers](https://github.com/obra/superpowers) installed, invoke with:
+```
+activate_skill visual-qa
+activate_skill visual-refine
+```
+
+Otherwise, point your agent directly at `visual-qa/SKILL.md` or `visual-refine/SKILL.md`.
+
+> **Note:** `visual-refine` dispatches subagents internally. Gemini CLI has no subagent
+> equivalent — all phases fall back to single-session sequential execution. See
+> `visual-refine/references/gemini-tools.md` for the per-phase fallback guide.
+
+**Codex**
+
+Copy the skill directories, then follow the skill file instructions directly:
+
+```bash
+cp -r ~/projects/skills/visual-qa ~/.codex/skills/
+cp -r ~/projects/skills/visual-refine ~/.codex/skills/
+```
+
+For full `visual-refine` subagent support, enable multi-agent mode in
+`~/.codex/config.toml`:
+
+```toml
+[features]
+multi_agent = true
+```
+
+See `visual-refine/references/codex-tools.md` for the complete skill-to-skill dispatch
+mapping.
+
 #### Workflow
 
 1. **`visual-qa` (standalone audit)** — Point at a running app, optionally with a scope (`visual-qa login screen`). The skill probes for a Chromium CDP or Android adb target, loads the 9-dimension rubric, plans an exhaustive interaction sweep, records frames, analyzes them against the rubric, enforces the exhaustion rule for untested cases, scores the surface, and writes a parser-friendly report to `docs/qa/YYYY-MM-DD-visual-qa-<scope-slug>.md`. Never modifies code.
@@ -143,7 +185,7 @@ Do not restructure or reformat the skills "for compliance" with external style g
 
 ## Updating
 
-If you installed with symlinks, pull the latest from this repository and restart your Claude Code session. If you installed with `cp`, re-run the copy commands from the Installation section.
+If you installed with symlinks, pull the latest from this repository and restart your session. If you installed with `cp`, re-run the copy commands from the Installation section — this includes the `references/` subdirectory inside each skill, which contains the tool mapping files for Gemini CLI and Codex.
 
 ## License
 
