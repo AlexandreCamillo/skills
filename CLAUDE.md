@@ -1,5 +1,18 @@
 # Visual Skills — Contributor Guidelines
 
+## Documentation-first rule
+
+Before making any change, **read the relevant documentation** in `docs/`.
+
+Use [`docs/INDEX.md`](docs/INDEX.md) to find which docs apply to your task. If multiple docs are relevant, read all of them before starting.
+
+**This is non-negotiable.** Never skip this step regardless of how simple the change appears.
+
+## Quick reference
+
+- Git conventions: `docs/git/conventions.md`
+- Doc index (start here): `docs/INDEX.md`
+
 ## If You Are an AI Agent
 
 Stop. Read this section before doing anything.
