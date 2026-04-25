@@ -172,6 +172,74 @@ mapping.
 - **Composable, not monolithic** — `visual-qa` is usable standalone. `visual-refine` composes `visual-qa`, `writing-plans`, `executing-plans`, `subagent-driven-development`, `requesting-code-review`, and `simplify`. Each skill does one thing.
 - **Hard-gated flow** — a `<HARD-GATE>` block plus a checklist plus a `digraph` at the top of each `SKILL.md` makes it much harder for an agent to quietly skip a step.
 
+### Autonomous orchestration — `brainstorm-and-execute`
+
+A skill that takes a high-level idea (or an existing spec / plan) all the way through brainstorm → spec → plan → parallel-execute → `/simplify`, autonomously, without user intervention. Every interactive decision in `superpowers:brainstorming` is replaced with a deterministic, auditable, persisted decision protocol scored against a per-run rubric synthesized from the project's `CLAUDE.md` / `AGENTS.md` / recent commit history.
+
+#### How it works
+
+You point your coding agent at an idea: `/brainstorm-and-execute add a dark mode toggle to settings`. The skill freezes a 3–5 criterion weighted rubric from project context, then walks the brainstorming flow autonomously — every decision generates a pros/cons table, scores each option 0–3 against every rubric criterion, picks the winner by weighted sum (with `simplicity` as the deterministic tie-breaker), and persists the decision file. Phase 3 dispatches `spec-document-reviewer` (max 3 cycles). Phase 4 dispatches `superpowers:writing-plans` with an extra contract: every task declares `depends_on`, `files`, and `acceptance`. Phase 5 builds a DAG and dispatches each topological wave as parallel subagents (capped at `--max-parallel`), running the lint+typecheck+test gate between waves and soft-resetting any subagent commits. Phase 6 invokes `/simplify` scoped to the diff since `INITIAL_SHA`; if simplify breaks the gate, the simplify diff is stashed and the executor's clean output is preserved. Phase 7 verifies HEAD is unchanged and writes a consolidated run report.
+
+The whole flow is guarded by four hard invariants: HEAD == INITIAL_SHA at start AND end (no commits, ever), gate-must-pass between waves, wall-clock budget cap (default 60min), and bounded review retries (3 spec / 2 plan). The user owns every commit boundary. Failure modes (`budget-exhausted`, `aborted-gate-failure`, `spec-review-exhausted`, `plan-review-exhausted`, `aborted-invariant-violation`, `success-without-simplify`, `no-tasks-needed`) are first-class outcomes in the run report.
+
+#### Installation
+
+The skill is user-global, same pattern as `visual-qa` / `visual-refine`:
+
+```bash
+# 1. Symlink the skill into your user-global skills directory
+ln -snf ~/projects/skills/brainstorm-and-execute ~/.claude/skills/brainstorm-and-execute
+
+# 2. Drop a slash-command wrapper at ~/.claude/commands/brainstorm-and-execute.md
+# (see "Slash command wrapper" below for the canonical contents)
+mkdir -p ~/.claude/commands
+```
+
+**Slash command wrapper**
+
+Write the following to `~/.claude/commands/brainstorm-and-execute.md`:
+
+```
+# brainstorm-and-execute
+
+Invoke the user-global `brainstorm-and-execute` skill. The skill lives at
+`~/.claude/skills/brainstorm-and-execute/SKILL.md`. All phases, gates, and
+invariants are defined there.
+
+Args:
+- Free-text idea (default)         — full pipeline
+- `--spec <path>`                  — resume from existing spec
+- `--plan <path>`                  — resume from existing plan
+- `--budget <minutes>` (default 60)
+- `--max-parallel <N>` (default 4)
+- `--no-simplify`                  — skip the final /simplify pass
+- `--allow-dirty`                  — proceed on a dirty working tree
+```
+
+**Optional: project-local slash-command**
+
+If you want `/brainstorm-and-execute` to work inside a specific project without the user-global file, drop the same wrapper into the project's `.claude/commands/brainstorm-and-execute.md`.
+
+**Verify installation**
+
+```bash
+./scripts/verify-brainstorm-and-execute.sh
+```
+
+Expected last line: `Result: OK`.
+
+#### What the skill writes
+
+Per-run artifacts land in your project's `docs/superpowers/`:
+
+- `decisions/<prompt-slug>/rubric.md` — frozen at end of Phase 1.
+- `decisions/<prompt-slug>/NN-<decision-slug>.md` — one per decision in Phase 2.
+- `specs/YYYY-MM-DD-<prompt-slug>-design.md` — written by Phase 2.
+- `plans/YYYY-MM-DD-<prompt-slug>-plan.md` — written by Phase 4.
+- `runs/YYYY-MM-DD-<prompt-slug>-run.md` — the consolidated run report.
+
+Plus working-tree changes from Phase 5 (and possibly Phase 6), uncommitted, with HEAD preserved.
+
 ## Contributing
 
 Skills in this collection are small and opinionated. If you have an improvement, the workflow is the same you'd use for any superpowers skill:
