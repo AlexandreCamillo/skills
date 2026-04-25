@@ -56,6 +56,7 @@ Optional flags:
 - `--budget <minutes>` (default 60) — wall-clock cap.
 - `--max-parallel <N>` (default 4) — concurrency cap per wave.
 - `--no-simplify` — skip Phase 6.
+- `--allow-dirty` — proceed when working tree is not clean. Without this flag, Phase 0 aborts on a dirty tree. With this flag, Phase 0 logs a warning to the run report and continues; the no-commit invariant still applies to anything the skill itself produces.
 
 ### Hard invariants (non-negotiable, mechanical)
 
@@ -75,6 +76,7 @@ Optional flags:
 | `spec-review-exhausted` | 3 spec-review cycles failed | Decision log up to spec phase |
 | `plan-review-exhausted` | 2 plan-review cycles failed | Spec, decisions, broken plan attached to report |
 | `aborted-invariant-violation` | HEAD == INITIAL_SHA invariant could not be restored | Run report explains; manual recovery required |
+| `no-tasks-needed` | Phase 4 produced an empty plan | Spec, decisions; nothing executed |
 
 ## Phase-by-phase breakdown
 
@@ -86,6 +88,7 @@ The skill runs eight phases sequentially. Each phase has a hard-gate, an output 
 - Working tree must be clean (or proceed in explicit dirty-tree mode with a warning logged in the run report).
 - Detect lint / typecheck / test commands by scanning `package.json` / `pyproject.toml` / `Cargo.toml` / `Makefile`. If none found, gate degrades to "build must succeed" only; logged in the rubric.
 - Resolve invocation mode (idea / `--spec` / `--plan`); compute `prompt-slug` (kebab-case, max 60 chars).
+- **Slug collision policy:** if `docs/superpowers/decisions/<prompt-slug>/` already exists, append `-N` to the slug (incrementing `N` until a free name is found). Spec/plan/run filenames already include `YYYY-MM-DD`, so collisions there only matter if two runs start the same day; in that case the date prefix is suffixed with `-N` as well. The chosen slug is logged in Phase 0 of the run report.
 - Create folders: `docs/superpowers/decisions/<prompt-slug>/`, `docs/superpowers/runs/`.
 - Start the wall-clock timer.
 
@@ -226,7 +229,7 @@ Plan-review subagent enforces:
 - Every task has `id` / `depends_on` / `files` / `acceptance`.
 - `depends_on` references valid task ids.
 - DAG (no cycles).
-- No `files` overlap between two tasks in the same wave.
+- No `files` overlap between two tasks in the same wave. **"Overlap" means exact path match** (the YAML `files:` entries are normalized to repo-root-relative paths and compared as strings). Same-directory or same-package is allowed.
 - Every leaf task has at least one acceptance criterion.
 
 ### DAG construction
@@ -244,7 +247,12 @@ For each wave in order:
 2. **Dispatch parallel subagents.** Each subagent receives task content (title, files, acceptance), spec path for context, instruction to follow `superpowers:subagent-driven-development`, and explicit constraints: no commit; no modifying files outside the listed `files`; no running lint/typecheck/test (orchestrator does it).
 3. **Collect and verify.** Orchestrator does not trust the subagent's success claim. It reads the touched files via `git diff` to confirm changes happened.
 4. **Run the gate.** Lint + typecheck + test on the working tree.
-5. **Handle gate failure.** Identify failing file → map to task → dispatch ONE retry subagent with original instructions + gate failure output. Re-run gate. Second failure: abort with `outcome: aborted-gate-failure`; roll back this wave via `git stash`; prior waves preserved.
+5. **Handle gate failure.** Try to map failing files in the gate output to a task whose `files` list contains them. Three cases:
+   - **Single task identified** → dispatch ONE retry subagent for that task with original instructions + gate failure output.
+   - **Multiple tasks identified** → dispatch retry subagents for each in parallel, same as the wave dispatch.
+   - **No task identified** (cross-cutting failure: e.g., a shared test file not in any task's `files`, or a global lint rule) → dispatch ONE retry subagent for the **whole wave** with the gate failure output and an instruction to coordinate. The retry subagent receives the union of the wave's `files` lists as its allowed-modification scope.
+
+   Re-run gate. Second failure: abort with `outcome: aborted-gate-failure`; roll back this wave via `git stash`; prior waves preserved.
 6. **HEAD checkpoint.** `git log INITIAL_SHA..HEAD --oneline` — if any commits, soft-reset (`git reset --soft INITIAL_SHA`). Working tree changes preserved.
 7. **Budget check.** Subtract elapsed; if exhausted, abort with `outcome: budget-exhausted`.
 
@@ -310,7 +318,7 @@ brainstorm-and-execute/
 | Platform | Subagents | Parallel dispatch | Phase 5 behavior |
 |---|---|---|---|
 | Claude Code | native | native | full DAG-wave parallel execution |
-| Codex | requires `multi_agent = true` | yes if enabled | full parallel; sequential fallback otherwise |
+| Codex | requires `multi_agent = true` | yes if enabled | full parallel; sequential fallback otherwise. Gate-between-waves invariant still holds in sequential mode (each task is its own wave). |
 | Gemini CLI | none | none | sequential per-task; DAG still respected for ordering |
 
 `references/gemini-tools.md` documents the sequential fallback explicitly.
