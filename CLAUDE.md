@@ -81,7 +81,7 @@ Skills are not prose — they are code that shapes agent behavior. If you modify
 
 - The `<HARD-GATE>` blocks at the top of both `SKILL.md` files.
 - The 11-step checklist in `visual-qa/SKILL.md`.
-- The 21-step phase checklist in `visual-refine/SKILL.md`.
+- The 17-step phase checklist in `visual-refine/SKILL.md`.
 - The 9-dimension rubric table and scoring rules in `design-principles.md`.
 - The blacklist of anti-patterns in `design-principles.md` Part 3.
 - The exhaustion rule in `visual-qa/references/exploration-checklist.md`.

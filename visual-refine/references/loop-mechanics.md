@@ -1,8 +1,8 @@
 # Loop Mechanics
 
-This reference explains the control-flow primitives that `visual-refine` relies on: the no-commit guard, the Phase 5 loop exit rules, the regression restart loop, and how issue identity is tracked across reports. Read this before implementing or modifying any phase that touches git state or loop control.
+This reference explains the control-flow primitives that `visual-refine` relies on: the no-commit guard, the Phase 3 loop exit rules, the regression restart loop, and how issue identity is tracked across reports. Read this before implementing or modifying any phase that touches git state or loop control.
 
-All four mechanisms are independent: a run can hit the no-commit guard without ever entering the regression loop, and the Phase 5 exit rules run whether or not a checkpoint fires. Treat each section as a self-contained contract.
+All four mechanisms are independent: a run can hit the no-commit guard without ever entering the regression loop, and the Phase 3 exit rules run whether or not a checkpoint fires. Treat each section as a self-contained contract.
 
 ## The no-commit guard
 
@@ -38,29 +38,29 @@ The final invariant check is not redundant with the per-phase checkpoints. A pha
 
 ### Where checkpoints run in visual-refine
 
-- Checkpoint after Phase 4 (plan execution), before running the next visual-qa.
-- Checkpoint after Phase 6 (refactor: requesting-code-review + simplify), before anti-regression verification.
-- Final invariant check before writing the final report in Phase 8.
+- Wrapper checkpoint after Phase 2 (per-iteration `brainstorm-and-execute` invocation), before running the next visual-qa. This is defense-in-depth: `brainstorm-and-execute` already enforces `HEAD == INITIAL_SHA` internally at the end of its Phase 7. The wrapper checkpoint should always be a no-op; if it fires, log and proceed.
+- Checkpoint after Phase 4 (final refactor: requesting-code-review + simplify), before anti-regression verification.
+- Final invariant check before writing the final report in Phase 6 (visual-refine's final-report phase).
 
-## Phase 5 loop exit precedence
+## Phase 3 loop exit precedence
 
-Phase 5 decides whether to continue iterating or exit the refine loop. It evaluates four branches in a fixed order. The branches are mutually exclusive — the first one that matches wins.
+Phase 3 decides whether to continue iterating or exit the refine loop. It evaluates four branches in a fixed order. The branches are mutually exclusive — the first one that matches wins.
 
-At the moment Phase 5 runs, two reports exist: the baseline iter `N` report and the freshly-generated iter `N+1` report. Every branch below is a predicate over those two reports (and over the persistent counters `STALLED_COUNT` and the current iteration number).
+At the moment Phase 3 runs, two reports exist: the baseline iter `N` report and the freshly-generated iter `N+1` report. Every branch below is a predicate over those two reports (and over the persistent counters `STALLED_COUNT` and the current iteration number).
 
 The evaluation, expressed as pseudocode, is:
 
 ```text
 if count(iter_{N+1}.issues, severity in {critical, major}) == 0:
-    exit → Phase 6                 # clean-exit
+    exit → Phase 4                 # clean-exit
 elif (N+1) >= 2 and avg_rubric(iter_{N+1}) <= avg_rubric(iter_N):
     STALLED_COUNT += 1
     if STALLED_COUNT >= 2:
-        exit → Phase 6 (log loop-stalled)
+        exit → Phase 4 (log loop-stalled)
     else:
         continue                    # one stall absorbed; try another iter
 elif (N+1) == MAX_ITER:
-    exit → Phase 6 (log iter-cap-hit)
+    exit → Phase 4 (log iter-cap-hit)
 else:
     N += 1
     goto Phase 2
@@ -70,9 +70,9 @@ Note that a single stall is absorbed silently — the loop continues but `STALLE
 
 ### Branch evaluation order
 
-1. **Clean exit:** iter `N+1` has zero `critical` and zero `major` issues → go to Phase 6.
-2. **Stall exit:** `N+1 >= 2` AND `avg_rubric` did not improve versus iter `N` → increment `STALLED_COUNT`; if `STALLED_COUNT >= 2`, go to Phase 6 and log `loop-stalled` in the final report. *(The `N+1 >= 2` guard ensures stall detection never fires on the first iteration — we need at least two iterations of history to compare.)*
-3. **Iter-cap exit:** iteration number reaches `MAX_ITER = 5` → go to Phase 6 and log `iter-cap-hit`.
+1. **Clean exit:** iter `N+1` has zero `critical` and zero `major` issues → go to Phase 4.
+2. **Stall exit:** `N+1 >= 2` AND `avg_rubric` did not improve versus iter `N` → increment `STALLED_COUNT`; if `STALLED_COUNT >= 2`, go to Phase 4 and log `loop-stalled` in the final report. *(The `N+1 >= 2` guard ensures stall detection never fires on the first iteration — we need at least two iterations of history to compare.)*
+3. **Iter-cap exit:** iteration number reaches `MAX_ITER = 5` → go to Phase 4 and log `iter-cap-hit`.
 4. **Continue:** `N += 1`, return to Phase 2 with the new iter report as baseline.
 
 Branches are mutually exclusive and evaluated in the order above. If an earlier branch fires, later branches are not checked.
@@ -89,11 +89,11 @@ Note that `MAX_ITER` is a ceiling, not a target. A clean run may exit at iter 2 
 
 ## Regression restart loop
 
-A regression is when a refactor in Phase 6 reintroduces an issue that we had already resolved. The restart loop is the escape hatch: it throws away the working tree, rewinds to `INITIAL_SHA`, and starts the scope fresh with a lesson learned.
+A regression is when a refactor in Phase 4 reintroduces an issue that we had already resolved. The restart loop is the escape hatch: it throws away the working tree, rewinds to `INITIAL_SHA`, and starts the scope fresh with a lesson learned.
 
 ### Trigger
 
-The post-refactor `visual-qa` in Phase 7 introduces a new `(dimension, tag, title)` tuple that was NOT present in the last green iter report from Phase 5. That counts as a regression caused by the refactor and triggers the restart loop.
+The post-refactor `visual-qa` in Phase 5 introduces a new `(dimension, tag, title)` tuple that was NOT present in the last green iter report from Phase 3. That counts as a regression caused by the refactor and triggers the restart loop.
 
 ### Steps
 
@@ -115,11 +115,11 @@ Operationally, the abort writes `status: aborted-regression-loop` in the final r
 
 ## Issue identity matching across reports
 
-Every phase that compares visual-qa reports — Phase 5 stall detection, Phase 7 anti-regression, and the regression-loop diagnostic note — needs a way to say "this issue in report B is the same issue as that one in report A". Refine does not use ids for this; it matches on a structured tuple instead.
+Every phase that compares visual-qa reports — Phase 3 stall detection, Phase 5 anti-regression, and the regression-loop diagnostic note — needs a way to say "this issue in report B is the same issue as that one in report A". Refine does not use ids for this; it matches on a structured tuple instead.
 
 ### The (dimension, tag, title) tuple rule
 
-Refine tracks issue identity across reports by comparing the 3-tuple `(issue.dimension, issue.tag, issue.title)`. If all three match, the two issues are considered the same, regardless of which id either report assigned. This is how Phase 7 decides whether a post-refactor report contains "new" issues: any tuple that appears in the post-refactor report and did not appear in the last green iter report is a regression. Note that severity is not part of the tuple — a severity bump on a matched tuple is tracked separately as a severity-change, not a new issue.
+Refine tracks issue identity across reports by comparing the 3-tuple `(issue.dimension, issue.tag, issue.title)`. If all three match, the two issues are considered the same, regardless of which id either report assigned. This is how Phase 5 decides whether a post-refactor report contains "new" issues: any tuple that appears in the post-refactor report and did not appear in the last green iter report is a regression. Note that severity is not part of the tuple — a severity bump on a matched tuple is tracked separately as a severity-change, not a new issue.
 
 ### Why ids are not stable across reports
 
@@ -138,4 +138,4 @@ Iter `N+1` contains:
 
 The tuple match on `(spacing, card-gap, "Inconsistent gap between cards in sidebar")` tells refine that `I-003` in iter `N` and `I-001` in iter `N+1` are the same issue — the refactor did not fix it, despite the id change.
 
-The second issue `I-007` has no matching tuple in iter `N`, so it is classified as a regression if encountered post-refactor in Phase 7, or as newly-surfaced work if encountered during a normal Phase 5 comparison. The distinction matters because regressions trigger the restart loop, whereas newly-surfaced work does not.
+The second issue `I-007` has no matching tuple in iter `N`, so it is classified as a regression if encountered post-refactor in Phase 5, or as newly-surfaced work if encountered during a normal Phase 3 comparison. The distinction matters because regressions trigger the restart loop, whereas newly-surfaced work does not.
