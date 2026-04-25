@@ -1065,7 +1065,9 @@ git commit -m "feat(brainstorm-and-execute): add Gemini CLI tool mapping"
 
 - [ ] **Step 1: Write the file**
 
-```markdown
+> Note to implementer: the block below uses **quad-backtick** outer fences because the file content contains a triple-backtick `toml` block. Copy the inner content (between the outer ` ```` ` markers).
+
+````markdown
 # Codex Tool Mapping — brainstorm-and-execute
 
 Skills use Claude Code tool names. When you encounter these in
@@ -1105,7 +1107,7 @@ calls. They count against the same wall-clock budget as Phase 5 work.
 
 The five-step autonomous decision protocol is platform-independent. It runs
 identically on Codex.
-```
+````
 
 - [ ] **Step 2: Verify key content**
 
@@ -1933,9 +1935,11 @@ Expected: the run aborts with `outcome: budget-exhausted` in the run report. Ver
 
 - [ ] **Step 2: Plan-review exhaustion test**
 
-Construct a minimal broken plan with a cycle and pass it via `--plan`:
+Construct a minimal broken plan with a cycle and pass it via `--plan`.
 
-```bash
+> Note to implementer: the bash block below uses **quad-backtick** outer fences because the heredoc contents include a triple-backtick `yaml` block. Copy the inner shell command (between the outer ` ```` ` markers).
+
+````bash
 mkdir -p /tmp/be-test
 cat > /tmp/be-test/broken-plan.md <<'EOF'
 # Broken plan
@@ -1959,7 +1963,7 @@ tasks:
     parallel_safe: true
 ```
 EOF
-```
+````
 
 Then invoke:
 ```
