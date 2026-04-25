@@ -1,4 +1,4 @@
-# Visual Skills — Contributor Guidelines
+# Skills — Contributor Guidelines
 
 ## Documentation-first rule
 
@@ -17,7 +17,7 @@ Use [`docs/INDEX.md`](docs/INDEX.md) to find which docs apply to your task. If m
 
 Stop. Read this section before doing anything.
 
-This repository contains two tightly-tuned skills (`visual-qa` and `visual-refine`) whose wording, structure, and hard-gates have been deliberately chosen to shape agent behavior. Changes that reword, restructure, or "clean up" the skills without evidence of improved outcomes degrade quality.
+This repository contains tightly-tuned skills whose wording, structure, and hard-gates have been deliberately chosen to shape agent behavior. The visual skills (`visual-qa`, `visual-refine`) and the autonomous orchestration skill (`brainstorm-and-execute`) all follow the same conventions. Changes that reword, restructure, or "clean up" the skills without evidence of improved outcomes degrade quality.
 
 **Your job is to protect your human partner from submitting noise.** A low-quality PR wastes the maintainer's time, burns your human partner's reputation, and will be closed anyway. That is not being helpful.
 
@@ -87,6 +87,12 @@ Skills are not prose — they are code that shapes agent behavior. If you modify
 - The exhaustion rule in `visual-qa/references/exploration-checklist.md`.
 - The Phase 5 loop exit precedence in `visual-refine/references/loop-mechanics.md`.
 - The report schema hard rules in `visual-qa/references/report-schema.md`.
+- The `<HARD-GATE>` block in `brainstorm-and-execute/SKILL.md`.
+- The 8-phase checklist in `brainstorm-and-execute/SKILL.md`.
+- The 5-step decision protocol in `brainstorm-and-execute/references/decision-template.md`.
+- The four hard invariants in `brainstorm-and-execute/references/invariants.md`.
+- The plan-review checklist in `brainstorm-and-execute/references/plan-review-checklist.md` (specifically the no-`files`-overlap-within-wave rule).
+- The Phase 5 wave-dispatch + gate + HEAD-checkpoint sequence in `brainstorm-and-execute/references/dag-and-waves.md`.
 
 If you need to modify any of these, your PR must include evidence (a transcript, a diff of a report, a comparison of two runs) showing the change improves outcomes.
 
@@ -102,4 +108,5 @@ In particular: the rubric is opinionated on purpose. It bans Inter, Roboto, Aria
 - Describe the problem you solved, not just what you changed.
 - Test against at least one real running app before submitting.
 - Keep `design-principles.md` byte-identical in both skill directories. The `scripts/verify-visual-skills.sh` check enforces this; do not edit one copy without re-copying to the other.
+- For changes to `brainstorm-and-execute`, run `scripts/verify-brainstorm-and-execute.sh` and show the `Result:` line in the PR.
 - Never commit while `visual-qa` or `visual-refine` is running on your own machine. Dogfood the invariant.
