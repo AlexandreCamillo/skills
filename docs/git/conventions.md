@@ -37,6 +37,7 @@ Use the component or file area being changed:
 | `docs`         | Changes to `docs/`                                |
 | `platform`     | Changes to `GEMINI.md`, `AGENTS.md`, or `CLAUDE.md`  |
 | `install`      | README install steps or runtime requirements      |
+| `brainstorm-and-execute` | Changes to the `brainstorm-and-execute/` skill |
 
 ## Good vs Bad Examples
 
