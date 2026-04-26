@@ -93,6 +93,112 @@ const stack = await page.evaluate(() => {
 });
 ```
 
+## Capturing transitions
+
+Transitions — sidebar collapse, modal enter/exit, tab switch, accordion expand — are where most "this feels off" bugs live, but a single before/after screenshot pair hides them. Capture every transition with a 5-frame recipe at `[0%, 25%, 50%, 75%, 100%]` of its duration so you can see the easing curve, intermediate layout, and any frame-skipping. Pick one of the two paths below; prefer `currentTime` stepping when the animation is driven by the Web Animations API because it is deterministic and framerate-independent.
+
+### Native-speed sampling
+
+Use this when the transition is driven by CSS `transition`/`animation` rules and you cannot pause it. Kick the transition (e.g., click the sidebar collapse button), then snapshot at `requestAnimationFrame` ticks every `duration/4` ms for a total of 5 frames. Read the active animation duration via Chrome MCP `evaluate_script` when you can — for example, `getComputedStyle(el).transitionDuration` — and fall back to a default of `240 ms` when the value is unknown or `0s`.
+
+```javascript
+// Native-speed 5-frame sampling
+const sampleTransition = async (page, triggerSelector, targetSelector) => {
+  // Read the active duration; fall back to 240ms if unknown.
+  const duration = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const cs = getComputedStyle(el);
+    const d = parseFloat(cs.transitionDuration) || 0;
+    return d > 0 ? d * 1000 : 240;
+  }, targetSelector);
+
+  const step = duration / 4;            // 5 frames at 0%, 25%, 50%, 75%, 100%
+  await page.click(triggerSelector);    // kick the transition
+  for (let i = 0; i < 5; i++) {
+    await page.screenshot({ path: `${outputDir}/t${i}.png` });
+    if (i < 4) await new Promise(r => setTimeout(r, step));
+  }
+};
+```
+
+### `currentTime` stepping (preferred when available)
+
+When the transition is implemented via the Web Animations API (`element.animate(...)`, View Transitions, or any library that produces real `Animation` objects), you can step through it deterministically. Query `element.getAnimations()`, pause each animation, set `currentTime` to `[0, 0.25*d, 0.50*d, 0.75*d, d]`, and snapshot per step. This eliminates framerate jitter, makes the capture reproducible across runs, and works regardless of the host machine's load.
+
+```javascript
+// Deterministic 5-frame stepping via Web Animations API
+const stepTransition = async (page, targetSelector) => {
+  // Pause every animation on the target so currentTime drives playback.
+  const duration = await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const anims = el.getAnimations();
+    if (!anims.length) return null;
+    let d = 0;
+    for (const a of anims) {
+      a.pause();
+      const t = a.effect && a.effect.getTiming ? a.effect.getTiming().duration : 0;
+      if (typeof t === 'number' && t > d) d = t;
+    }
+    return d;
+  }, targetSelector);
+
+  if (duration == null || duration === 0) return null; // fall back to native-speed sampling
+
+  const offsets = [0, 0.25, 0.5, 0.75, 1].map(f => f * duration);
+  for (let i = 0; i < offsets.length; i++) {
+    await page.evaluate((sel, t) => {
+      document.querySelector(sel).getAnimations().forEach(a => { a.currentTime = t; });
+    }, targetSelector, offsets[i]);
+    await page.screenshot({ path: `${outputDir}/t${i}.png` });
+  }
+};
+```
+
+## Component & state enumeration
+
+Use this DOM-walk heuristic to enumerate every component in scope and the states it can reach, so the report inventory is grounded in what actually exists rather than what you remembered to look at. The recipe assumes a CSS-modules-style class naming convention (`_<name>_<hash>`); for projects using a different convention, swap the regex but keep the six-step shape.
+
+1. **Start at the scope root.** For a scoped run this is the element matching the scope selector; for a full-app run it is `document.body`.
+2. **Walk children depth-first.** Visit every descendant. An element is a component candidate when at least one of its classes matches `_<name>_<hash>` (e.g., `_Sidebar_a1b2c3`).
+3. **Strip duplicates by canonical class name.** The canonical name is the leading `<name>` part before the hash. Two elements with `_Sidebar_a1b2c3` and `_Sidebar_d4e5f6` collapse into one `Sidebar` candidate; multiple instances of the same canonical name collapse into one entry.
+4. **Probe each candidate for reachable states.** For each candidate run a small battery of probes and record which states actually fire: synthesize hover via Chrome MCP `hover`, programmatic focus via `el.focus()`, and a `MutationObserver` watching `aria-expanded`, `aria-selected`, `data-state`, `data-open`, and similar attribute changes. Each observed state goes into the candidate's `states` array.
+5. **Register transitions between reachable states.** For every ordered pair of reachable states `(s1, s2)` that the candidate actually moved through, register a transition entry. Default `expected_animated: yes` when either state name contains `expand`, `collapse`, `open`, `close`, `enter`, or `exit`; otherwise default `expected_animated: no`. The field is always emitted.
+6. **Emit the array.** The output is an array of `{ component, states, transitions }` objects suitable for direct serialization into the report frontmatter `inventory` field.
+
+```javascript
+// 6-step DOM walk: enumerate components, states, and transitions
+const enumerateInventory = async (page, scopeSelector) => {
+  return await page.evaluate((scopeSel) => {
+    const root = scopeSel ? document.querySelector(scopeSel) : document.body;
+    const cssModuleRe = /^_([A-Za-z0-9]+)_[A-Za-z0-9]+$/;
+    const animKeywords = /(expand|collapse|open|close|enter|exit)/i;
+
+    // Step 2 + 3: depth-first walk, candidate = CSS-module class, dedupe by canonical name.
+    const candidates = new Map(); // canonical name -> first seen element
+    const walk = (node) => {
+      if (node.nodeType !== 1) return;
+      for (const cls of node.classList || []) {
+        const m = cls.match(cssModuleRe);
+        if (m && !candidates.has(m[1])) candidates.set(m[1], node);
+      }
+      for (const child of node.children) walk(child);
+    };
+    walk(root);
+
+    // Step 4 + 5: probes are dispatched from the outer Chrome MCP layer;
+    // here we only seed the structure with the canonical names so the caller
+    // can fill in `states` and `transitions` after running hover/focus/observers.
+    return Array.from(candidates.keys()).map((name) => ({
+      component: name,
+      states: [],         // populated by hover/focus/MutationObserver probes
+      transitions: [],    // populated by the caller; expected_animated defaults via animKeywords
+    }));
+  }, scopeSelector);
+};
+```
+
+The probes in step 4 (Chrome MCP `hover`, programmatic `focus()`, `MutationObserver` for attribute changes) are dispatched from the calling layer, not from inside this single `evaluate` block, because they require live interaction. The block above seeds the candidate set; the caller fills in `states` and `transitions` per candidate before serializing the array into the report frontmatter.
+
 ## Android adb recording
 
 Use adb when there is no Chromium target. There are two modes: per-frame PNGs via `screencap` (slower, but lets you control FPS precisely and mix in UI Automator dumps) and native `screenrecord` video (faster, up to ~3 minutes, no per-frame control). Prefer `screenrecord` for anything longer than ~15 seconds of continuous motion; use the PNG loop when you need specific FPS or tight coordination with events.

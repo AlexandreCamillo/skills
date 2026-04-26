@@ -1,5 +1,26 @@
 # Exploration Checklist
 
+> **Relationship to the inventory.** This checklist is **complementary** to the
+> Component & State Inventory generated in `visual-qa/SKILL.md` step 4.5. The
+> inventory is the **floor of coverage**: every (component, state) it
+> enumerates and every transition it declares must be exercised and captured.
+> This checklist is the **cross-cutting upper-bound** — it covers interaction
+> categories the inventory does not (and cannot) capture from a static DOM
+> walk: viewport-resize sweeps across 1440 / 900 / 390, rapid-click stress on
+> primary CTAs, long-text and pasted-multi-line overflow, edge-case payloads
+> (empty datasets, malformed data, offline), and the consistency sweep across
+> sibling screens.
+>
+> Treat the inventory as the per-component coverage contract and this file as
+> the per-scope interaction contract. Both must be satisfied. Where the two
+> overlap (e.g. an inventory transition that is also exercised by a
+> rapid-click stress under "Edge cases"), one capture covering both is fine —
+> but neither contract may be silently dropped because the other was met.
+>
+> The exhaustion rule at the bottom of this file is the only mechanism by
+> which an interaction may be marked `untested`. It applies equally to
+> inventory entries and to checklist categories.
+
 This file is the coverage contract for a `visual-qa` run. The agent MUST NOT
 finish a report until every category applicable to the chosen scope has been
 either exercised or explicitly marked `untested` under the exhaustion rule at

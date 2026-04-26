@@ -161,6 +161,80 @@ Type: list of objects. Required (may be empty). Each entry:
 - `strategies_tried`: list of strings, required, length ≥ 3. Each string describes one attempt. The three (or more) entries MUST span **distinct strategy categories**, not just distinct phrasings of the same approach. Recognised categories include: `request-interception`, `console-stubbing`, `network-emulation`, `storage-manipulation`, `feature-flag-override`, `devtools-evaluate`, `ui-driven`, `env-override`. If you cannot name three distinct categories you tried, remove the entry and keep exploring instead.
 - `reason`: string, required, explains why none of the strategies surfaced the interaction.
 
+### inventory
+
+Type: list of objects. Optional in standalone `visual-qa` runs; **required** when the report is consumed by a `visual-refine` Phase 1.5 (i.e., always for any visual-qa run inside a visual-refine wrapper). Strongly recommended for standalone runs so downstream tooling can compare component coverage across reports. Each entry describes one component discovered during the Step 4.5 DOM-walk inventory:
+
+- `id`: string, required, kebab-case stable identifier (e.g. `sidebar`, `sidebar-row`, `topbar`, `settings-appearance`). Should match canonical CSS-module names where available.
+- `states`: list of strings, required, length ≥ 1. Each string is a state name (e.g. `default`, `hover`, `active`, `disabled`, `expanded`, `collapsed`, `menu-open`, `working`, `error`).
+- `transitions`: list of objects, required (may be empty when the component has only one state). Each entry:
+  - `from`: string, required, MUST be a value present in this component's `states`.
+  - `to`: string, required, MUST be a value present in this component's `states` (and `to != from`).
+  - `expected_animated`: enum, required, exactly `yes` or `no`. The default heuristic is `yes` when the transition name or state pair contains any of `expand`, `collapse`, `open`, `close`, `enter`, or `exit`; otherwise `no`. The field is required even when defaulted — it is never omitted.
+
+Example:
+
+```yaml
+inventory:
+  - id: sidebar
+    states: [expanded, collapsed]
+    transitions:
+      - from: expanded
+        to: collapsed
+        expected_animated: yes
+  - id: topbar
+    states: [home, workspace-selected]
+    transitions:
+      - from: home
+        to: workspace-selected
+        expected_animated: no
+```
+
+### inventory_coverage
+
+Type: object. Optional in standalone runs but **required whenever `inventory` is present**. Records the Step 6.5 frame-quality self-check results so downstream tooling can decide whether to recapture before consuming the report. Sub-fields:
+
+- `complete`: bool, required. `true` only when every (component, state) in `inventory` has at least one frame ≥ 8 KB, every transition has 5 sequenced frames with a byte-distinct mid frame, and every (component, state) has a DOM snapshot.
+- `missing_states`: list of objects, required (may be empty). Each entry: `{component: <id>, state: <state-name>}`.
+- `missing_transitions`: list of objects, required (may be empty). Each entry: `{component: <id>, from: <state>, to: <state>}`.
+- `instant_transitions`: list of objects, required (may be empty). Each entry: `{component: <id>, from: <state>, to: <state>}`. Populated when a transition's start, mid, and end frames are byte-equal — the transition was recorded as effectively instant.
+- `low_quality_frames`: list of objects, required (may be empty). Each entry: `{path: <relative-frame-path>, reason: <free-form>}` (e.g. `reason: file_size=4KB`).
+
+Example:
+
+```yaml
+inventory_coverage:
+  complete: false
+  missing_states:
+    - {component: topbar, state: workspace-selected}
+  missing_transitions:
+    - {component: sidebar, from: expanded, to: collapsed}
+  instant_transitions:
+    - {component: theme-grid, from: default, to: selected}
+  low_quality_frames:
+    - {path: sidebar-row-hover.png, reason: file_size=4KB}
+```
+
+### aspiration_match
+
+Type: list of objects. Optional. Present **only** when the auditor was invoked with `--aspirational-spec <path>`; absent in all standalone runs and in any visual-qa run where no aspirational spec was passed. Each entry records the auditor's per-component fidelity verdict:
+
+- `component`: string, required. MUST match an `inventory[*].id` from this report and MUST correspond to a component listed in the linked aspirational spec.
+- `match`: enum, required, exactly `yes` or `no`. The auditor MUST default to `no` in case of doubt.
+- `notes`: string, required, non-empty. MUST enumerate concrete deltas between mockup and implementation (e.g. specific missing affordances, spacing differences, missing dividers). Generic phrasing such as `"looks different"` is not acceptable.
+
+Example:
+
+```yaml
+aspiration_match:
+  - component: topbar
+    match: yes
+    notes: "Padding, branch chip hierarchy, status pill match mockup intent."
+  - component: settings-appearance
+    match: no
+    notes: "Density cards lack multi-row wireframe content shown in mockup; sliders missing endpoint A icons; section dividers absent."
+```
+
 ## Hard rules
 
 1. Frontmatter YAML is mandatory and parsed before anything else.
@@ -169,6 +243,9 @@ Type: list of objects. Required (may be empty). Each entry:
 4. Every issue has a non-empty `rubric_target` describing the intended before→after score.
 5. Every `untested` entry has `strategies_tried` with ≥3 distinct entries. "Distinct" means distinct **strategy categories** (e.g., request-interception, console-stubbing, network-emulation, storage-manipulation, feature-flag-override, devtools-evaluate), not just different string values within the same category.
 6. If `avg_rubric < 2.0`, the report MUST include a `critical` issue `I-000` titled "Screen average below threshold".
+7. If `inventory_coverage.complete == false`, then **at least one** of `missing_states`, `missing_transitions`, `instant_transitions`, or `low_quality_frames` MUST be non-empty. A report cannot claim incomplete coverage without enumerating at least one specific gap — the schema does not permit silent or unattributed incompleteness.
+8. If `aspiration_match` is present, it MUST contain exactly one entry per component listed in the linked aspirational spec. Silently skipping a component (omitting its entry) is a malformed report and `visual-refine` refuses it. Every spec component is accounted for, including those whose verdict is `match: yes`.
+9. `inventory.transitions[].expected_animated` MUST be `yes` or `no` exactly — no other values, no boolean YAML coercion (e.g. `true`/`false`), no omission. The default heuristic is: `yes` when the transition name or state-pair contains any of `expand`, `collapse`, `open`, `close`, `enter`, or `exit`; otherwise `no`. The field is still **required** even when populated by the default — it is never absent.
 
 ## Full example
 
