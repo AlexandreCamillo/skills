@@ -1,3 +1,5 @@
+> **Deprecated.** This skeleton is no longer the source of truth for iteration specs. As of the aspirational-spec rollout, `visual-refine` generates an aspirational design spec in Phase 1.5 of its flow (see `visual-refine/SKILL.md` Phase 1.5), which describes the target end-state of the scope rather than a per-iteration issue checklist. That generated spec — together with the parsed visual-qa report — is what `brainstorm-and-execute` consumes downstream. The skeleton below is preserved as advisory reading for historical context and for authors who want to inspect the older per-iteration shape; do not author new iteration specs from it.
+
 This is a prose template, not a machine-parsed schema. `visual-refine` reads it as guidance for generating an iteration spec. Keep the sections in the order shown; extend within a section if needed but do not reorder.
 
 # Spec Template — Visual Refine Iteration

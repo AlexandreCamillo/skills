@@ -44,25 +44,42 @@ The final invariant check is not redundant with the per-phase checkpoints. A pha
 
 ## Phase 3 loop exit precedence
 
-Phase 3 decides whether to continue iterating or exit the refine loop. It evaluates four branches in a fixed order. The branches are mutually exclusive — the first one that matches wins.
+Phase 3 decides whether to continue iterating or exit the refine loop. It evaluates four ORDERED branches and the first match wins. The branches are mutually exclusive: as soon as a branch's predicate is satisfied, Phase 3 commits to that branch's outcome and does not evaluate later branches.
 
-At the moment Phase 3 runs, two reports exist: the baseline iter `N` report and the freshly-generated iter `N+1` report. Every branch below is a predicate over those two reports (and over the persistent counters `STALLED_COUNT` and the current iteration number).
+At the moment Phase 3 runs, two reports exist: the baseline iter `N` report and the freshly-generated iter `N+1` report (the latter produced by `visual-qa <scope> --aspirational-spec <path>`, so it carries `aspiration_match` and `inventory_coverage` in addition to `summary` and `issues`). Every branch below is a predicate over those two reports plus the persistent counters `STALLED_COUNT` and the current iteration number.
 
 The evaluation, expressed as pseudocode, is:
 
 ```text
-if count(iter_{N+1}.issues, severity in {critical, major}) == 0:
+# Branch 1 — CLEAN EXIT
+if    iter_{N+1}.summary.critical == 0
+  AND iter_{N+1}.summary.major    == 0
+  AND every aspiration_match.match == "yes"
+  AND no transition where expected_animated == yes appears in
+      iter_{N+1}.inventory_coverage.instant_transitions:
     exit → Phase 4                 # clean-exit
-elif (N+1) >= 2 and avg_rubric(iter_{N+1}) <= avg_rubric(iter_N):
+
+# Branch 2 — STALL
+elif (N+1) >= 2
+  AND avg_rubric_delta(iter_N → iter_{N+1})        == 0
+  AND aspiration_match_delta(iter_N → iter_{N+1})  == 0:
     STALLED_COUNT += 1
     if STALLED_COUNT >= 2:
         exit → Phase 4 (log loop-stalled)
     else:
         continue                    # one stall absorbed; try another iter
-elif (N+1) == MAX_ITER:
+
+# Branch 3 — ITER CAP
+elif iteration_number >= MAX_ITER:   # MAX_ITER = 5
     exit → Phase 4 (log iter-cap-hit)
+
+# Branch 4 — CONTINUE
 else:
     N += 1
+    # The verbatim list of components with aspiration_match: no in
+    # iter_{N+1} (with the auditor's notes) is appended to the next
+    # prompt's "lessons from previous attempt" block before re-entering
+    # Phase 2.
     goto Phase 2
 ```
 
@@ -70,16 +87,27 @@ Note that a single stall is absorbed silently — the loop continues but `STALLE
 
 ### Branch evaluation order
 
-1. **Clean exit:** iter `N+1` has zero `critical` and zero `major` issues → go to Phase 4.
-2. **Stall exit:** `N+1 >= 2` AND `avg_rubric` did not improve versus iter `N` → increment `STALLED_COUNT`; if `STALLED_COUNT >= 2`, go to Phase 4 and log `loop-stalled` in the final report. *(The `N+1 >= 2` guard ensures stall detection never fires on the first iteration — we need at least two iterations of history to compare.)*
-3. **Iter-cap exit:** iteration number reaches `MAX_ITER = 5` → go to Phase 4 and log `iter-cap-hit`.
-4. **Continue:** `N += 1`, return to Phase 2 with the new iter report as baseline.
+1. **CLEAN EXIT** — all four conditions must hold simultaneously:
+   - `iter_{N+1}.summary.critical == 0`,
+   - `iter_{N+1}.summary.major == 0`,
+   - every entry in `iter_{N+1}.aspiration_match` has `match == "yes"`,
+   - no transition whose `expected_animated == yes` (per the inventory) appears in `iter_{N+1}.inventory_coverage.instant_transitions`.
+
+   This is the **triple gate** (rubric floor + aspiration fidelity + transition completeness). All four predicates must pass; a single failure blocks the clean-exit branch and moves evaluation to Branch 2. → go to Phase 4.
+
+2. **STALL** — `N+1 >= 2` AND `avg_rubric_delta(iter_N → iter_{N+1}) == 0` AND `aspiration_match_delta(iter_N → iter_{N+1}) == 0`. Stall is now defined over both the rubric and aspiration progress: a flat rubric alone no longer counts as a stall if any component flipped from `aspiration_match: no` to `yes` between iterations, because that is real progress even when scores are unchanged. Increment `STALLED_COUNT`; if `STALLED_COUNT >= 2`, go to Phase 4 and log `loop-stalled` in the final report. *(The `N+1 >= 2` guard ensures stall detection never fires on the first iteration — we need at least two iterations of history to compare.)*
+
+3. **ITER CAP** — `iteration_number >= MAX_ITER` where `MAX_ITER = 5` → go to Phase 4 and log `iter-cap-hit`.
+
+4. **CONTINUE** — `N += 1`, return to Phase 2 with the new iter report as baseline. Before re-entering Phase 2, the wrapper appends the verbatim list of components whose `aspiration_match == "no"` in iter `N+1` (along with each entry's `notes` field, unchanged) into the new prompt's "lessons from previous attempt" block. See "Aspiration-match across iterations" below for the contract.
 
 Branches are mutually exclusive and evaluated in the order above. If an earlier branch fires, later branches are not checked.
 
 ### Stall detection (STALLED_COUNT)
 
-`avg_rubric` is the mean of the 9 rubric scores (`hierarchy`, `spacing`, `typography`, `color`, `motion`, `states`, `consistency`, `memorable_detail`, `accessibility`) read from the frontmatter of a visual-qa iter report. Stall detection exists to avoid burning context on iterations whose improvements are not actually landing in the rubric — an early exit is cheaper than a fifth speculative pass. The counter does not reset within a single scope run: once an iteration fails to improve `avg_rubric`, `STALLED_COUNT` accumulates and triggers the exit branch when it reaches `>= 2`. Two consecutive non-improvements is a stronger signal than one and reduces noise from single-iteration regressions in unrelated dimensions.
+`avg_rubric_delta` is the difference of `avg_rubric(iter_{N+1}) − avg_rubric(iter_N)`, where `avg_rubric` is the mean of the 9 rubric scores (`hierarchy`, `spacing`, `typography`, `color`, `motion`, `states`, `consistency`, `memorable_detail`, `accessibility`) read from the frontmatter of a visual-qa iter report. `aspiration_match_delta` is the count of components whose `aspiration_match.match` flipped from `no` to `yes` between iter `N` and iter `N+1` (matching by `component_id`; see "Issue identity matching across reports" below). A stall requires both deltas to be zero: a flat rubric alone is no longer sufficient, because a run that resolved an aspirational gap without moving any rubric score is still making progress.
+
+Stall detection exists to avoid burning context on iterations whose improvements are not actually landing in either signal — an early exit is cheaper than a fifth speculative pass. The counter does not reset within a single scope run: once an iteration fails to improve both `avg_rubric` and `aspiration_match`, `STALLED_COUNT` accumulates and triggers the exit branch when it reaches `>= 2`. Two consecutive non-improvements is a stronger signal than one and reduces noise from single-iteration regressions in unrelated dimensions.
 
 ### Iteration cap (MAX_ITER = 5)
 
@@ -125,6 +153,18 @@ Refine tracks issue identity across reports by comparing the 3-tuple `(issue.dim
 
 Issue ids of the form `I-NNN` are generated per-report to keep the frontmatter clean, human-readable, and easy to reference inside a single report. They are not meant to persist identity across multiple visual-qa runs. Two reports generated minutes apart from the same scope may assign different ids to the same underlying issue depending on traversal order. Authority for identity lies in the 3-tuple, not in the id. See `references/report-schema.md` Hard Rule 3 for the normative statement of this rule.
 
+### Addendum: identity when an aspirational-spec is in play
+
+When the iter report was produced by `visual-qa --aspirational-spec <path>` (i.e., any iter report inside a visual-refine wrapper from Phase 3 onward), refine switches the identity key for **aspiration_match-driven comparisons** from the 3-tuple `(dimension, tag, title)` to the spec's `component_id`. The `component_id` is the slug used in the aspirational-spec frontmatter (`topbar`, `sidebar-row`, `settings-appearance`, etc.) and is stable across iterations because it is fixed at Phase 1.5.D consolidation time, before any iteration runs.
+
+Concretely:
+
+- `aspiration_match_delta` (used by the STALL branch) matches entries by `component_id`. A component that was `aspiration_match: no` in iter `N` and `yes` in iter `N+1` counts as one resolved aspiration regardless of whether the underlying issue tuples changed.
+- The "lessons from previous attempt" block (see "Aspiration-match across iterations" below) is keyed on `component_id`, not on issue ids or 3-tuples.
+- Phase 5 aspiration regression detection (see "Phase 5 regression includes aspiration regression" below) compares iter-(final) and post-refactor reports by `component_id`.
+
+The 3-tuple rule remains in effect for issue-list comparisons (Phase 5 issue-tuple regression detection, the regression-loop diagnostic note). The two identity keys live side by side: `component_id` for aspiration-match flow, `(dimension, tag, title)` for issue-tuple flow. Reports that lack `aspiration_match` (standalone visual-qa runs) fall back to the 3-tuple rule everywhere.
+
 ### Worked example
 
 Consider two reports. Iter `N` contains:
@@ -139,3 +179,61 @@ Iter `N+1` contains:
 The tuple match on `(spacing, card-gap, "Inconsistent gap between cards in sidebar")` tells refine that `I-003` in iter `N` and `I-001` in iter `N+1` are the same issue — the refactor did not fix it, despite the id change.
 
 The second issue `I-007` has no matching tuple in iter `N`, so it is classified as a regression if encountered post-refactor in Phase 5, or as newly-surfaced work if encountered during a normal Phase 3 comparison. The distinction matters because regressions trigger the restart loop, whereas newly-surfaced work does not.
+
+## Aspiration-match across iterations
+
+When Phase 3 takes the CONTINUE branch, the wrapper carries iter `N+1`'s aspiration failures forward into the next iteration's prompt. The contract is verbatim transfer with no editorialization.
+
+### What is carried forward
+
+For every entry in `iter_{N+1}.aspiration_match` where `match == "no"`:
+
+- The `component` field (the `component_id` slug) — used as the identity key.
+- The `notes` field — copied **verbatim** into the next prompt; the wrapper does not summarize, paraphrase, truncate, or merge entries. The auditor's exact wording is what reaches `brainstorm-and-execute` next iteration. This preserves accountability across iterations and prevents a paraphrase from softening a concrete delta.
+
+Entries with `match == "yes"` are NOT carried forward; they are considered resolved and the next prompt does not relitigate them.
+
+### Where it lands in the next prompt
+
+The verbatim list is appended to the next-iteration `brainstorm-and-execute` prompt under the "lessons from previous attempt" block. The wrapper composes the block as follows:
+
+```
+Lessons from previous attempt:
+
+The previous iteration's auditor flagged the following components as
+not yet matching their aspirational mockup. Address each one this
+iteration; the auditor's notes are reproduced verbatim.
+
+- <component_id>: <notes verbatim>
+- <component_id>: <notes verbatim>
+...
+```
+
+If the regression-restart loop also produced a diagnostic note (see below), both inputs share the same block and are concatenated; neither displaces the other.
+
+### Why verbatim
+
+Paraphrase loss is a known failure mode: the auditor writes "density cards lack multi-row wireframe content shown in mockup; sliders missing endpoint A icons; section dividers absent" and a downstream summarizer produces "appearance section needs work" — which the next iteration interprets as "tweak some spacing" and re-ships the same generic surface. Verbatim transfer eliminates that failure mode by removing the summarization step entirely.
+
+## Phase 5 regression includes aspiration regression
+
+Phase 5 runs a post-refactor `visual-qa <scope> --aspirational-spec <path>` and compares it against iter-(final) (the last iter report from Phase 3 before exit). Regression is now defined over **both** issue tuples and aspiration_match outcomes; either kind of regression triggers the same restart path.
+
+### Trigger conditions
+
+A regression is recorded when **either** of the following is true in the post-refactor report:
+
+1. **Issue-tuple regression** (existing rule, unchanged): the post-refactor report contains a `(dimension, tag, title)` tuple that did NOT appear in the iter-(final) report. See "The (dimension, tag, title) tuple rule" above.
+2. **Aspiration regression** (NEW): some component has `aspiration_match: yes` in iter-(final) and `aspiration_match: no` in the post-refactor report. Identity matched on `component_id`. The diagnostic note records each such component with its iter-(final) `notes` and its post-refactor `notes` side by side so the next attempt understands what the refactor broke.
+
+### What happens on either trigger
+
+The two regression kinds share the existing restart path. From "Regression restart loop" above:
+
+1. Write diagnostic note `/tmp/visual-refine-regression-<timestamp>.md`. The note now includes both new issue tuples (if any) AND aspiration regressions (if any), labeled separately so the next attempt can tell them apart.
+2. `git stash push --include-untracked --message "visual-refine-regression-<scope-slug>-<timestamp>"`.
+3. `git reset --hard $INITIAL_SHA`.
+4. `RESTART_COUNT += 1`. If `RESTART_COUNT > MAX_RESTARTS` (`MAX_RESTARTS = 2`, unchanged): abort, write final report with status `aborted-regression-loop`, list preserved stashes, exit.
+5. Otherwise restart from Phase 1 (fresh `visual-qa`, no reuse). Inject the diagnostic note into the next iteration's prompt as "lessons from previous attempt".
+
+`RESTART_COUNT` and `MAX_RESTARTS = 2` are unchanged by the aspirational-spec layer; aspiration regressions and issue-tuple regressions share the same counter, so the two restart kinds together cap at the same total of 2 restarts per scope run. The hard-reset rationale and stash recovery story (described above in "Why we use git reset --hard here" and "Restart cap (MAX_RESTARTS = 2)") apply identically.

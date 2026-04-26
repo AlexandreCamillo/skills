@@ -20,31 +20,36 @@ This skill MUST NOT:
 - Proceed past Phase 0 if `git rev-parse HEAD` cannot be read.
 - Invoke `brainstorm-and-execute` without `--no-simplify`. Per-iteration simplify is forbidden; the only simplify pass runs in Phase 4 (final refactor) on the full cross-iteration diff.
 - Invoke `brainstorm-and-execute` with `--spec` or `--plan` flags. `visual-refine` always passes a free-text idea so that the autonomous brainstorm phase runs and produces the spec from the visual-qa issue list. The whole point of this composition is to delegate spec generation, not just plan/execute.
+- Skip Phase 1.5 (Aspirational Redesign). Phase 2 is never invoked before the aspirational-spec exists at the documented path under `docs/qa/<date>-visual-refine-<scope>-aspirational-spec.md`. Phase 1.5 is the source of the implementation target; without it, Phase 2's prompt has no aspirational anchor and the run reduces to the obsolete principle-only behavior.
+- Exit Phase 3 on a single gate. The Phase 3 exit criterion is the triple gate `(critical == 0 AND major == 0) AND (every aspiration_match == "yes") AND (no transition with expected_animated == yes appears in inventory_coverage.instant_transitions)`. All three conjuncts MUST hold to exit cleanly; failing any one returns to Phase 2 (subject to STALL and ITER CAP).
+- Exceed the recapture cap of 1 in Phase 1.5.B or the per-component mockup regeneration cap of 3 in Phase 1.5.C. After exceeding either cap the skill MUST take the documented abort path (`aborted-frame-coverage` or `aspirational_quality: degraded` respectively); silent retries are forbidden. The Phase 1.5.E exit gate MUST fire `aborted-aspirational-quality` when `components_degraded` exceeds 20% of `components_total`.
 </HARD-GATE>
 
 # Visual Refine
 
-Transform the scoped UI surface from its current state to one that scores at least 2 (ideally 3) on every rubric dimension of `references/design-principles.md`, via autonomous (spec → plan → execute) iterations, followed by refactor and anti-regression verification. Per-iteration spec generation is delegated to `brainstorm-and-execute` so each iteration is one autonomous run instead of four manual phases. Leave the final working tree to the user; never commit.
+Transform the scoped UI surface from its current state to one that scores at least 2 (ideally 3) on every rubric dimension of `references/design-principles.md` AND matches a per-component aspirational target the skill generates for itself, via autonomous (spec → plan → execute) iterations, followed by refactor and anti-regression verification. Per-iteration spec generation is delegated to `brainstorm-and-execute` so each iteration is one autonomous run instead of four manual phases. Leave the final working tree to the user; never commit.
 
 ## Inputs
 
 - Free-text scope argument (conceptually required; if omitted, scope is "full app"). Examples: `visual-refine`, `visual-refine tela de login`, `visual-refine fluxo de registro`.
 - Optional flag `--report <path>`: when provided and the file exists, `visual-refine` uses it as the initial baseline for Phase 1 instead of running `visual-qa` fresh.
-- Optional flag `--iter-budget <minutes>` (default `30`): forwarded to each per-iteration `brainstorm-and-execute` invocation as its `--budget`. The total wall-clock cap for a full `visual-refine` run is therefore `MAX_ITER × iter-budget` plus visual-qa runtime.
+- Optional flag `--iter-budget <minutes>` (default `60`): forwarded to each per-iteration `brainstorm-and-execute` invocation as its `--budget`. The default rose from 30 to 60 minutes because Phase 1.5 adds parallel mockup generation with self-honesty regeneration loops (estimated 15–25 min per iteration depending on component count). Worst-case wall-clock ceiling for a full `visual-refine` run is therefore `MAX_ITER × 60 + 25 ≈ 325 min` (the `+ 25` accounts for the Phase 1.5 generation cost and the final visual-qa runs in Phases 1, 3, and 5).
 
 ## Outputs
 
 - A consolidated report at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md`.
+- A Phase 1.5 aspirational-spec at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>-aspirational-spec.md` with one section per inventoried component.
+- Per-component standalone HTML mockups under `docs/qa/aspirational/<scope-slug>/<component-id>.html`, each openable in Chrome and self-contained.
 - All intermediate `visual-qa` iter reports kept in `docs/qa/`.
 - Per-iteration `brainstorm-and-execute` artifacts: one rubric (`docs/superpowers/decisions/<bae-slug>/rubric.md`), one set of decision files (`docs/superpowers/decisions/<bae-slug>/NN-*.md`), one autonomously-generated spec (`docs/superpowers/specs/<bae-slug>-design.md`), one plan (`docs/superpowers/plans/<bae-slug>-plan.md`), and one run report (`docs/superpowers/runs/<bae-slug>-run.md`).
 - Working tree with modifications applied, HEAD identical to `INITIAL_SHA`, no commits, no staged files beyond what was already staged at Phase 0.
 
 ## Required reading before you start
 
-- `references/design-principles.md` — the 9-dimension rubric used to grade scope quality.
-- `references/loop-mechanics.md` — checkpoint pattern, stall detection, regression restart, and issue-identity matching rules.
-- `references/spec-template.md` — historical skeleton kept as advisory reading; in this version of the skill, `brainstorm-and-execute` writes the spec autonomously and is not required to follow this template. Read it only to understand what dimensions a good iter spec covers.
-- `~/.claude/skills/visual-qa/references/report-schema.md` — authoritative schema for parsing visual-qa reports.
+- `references/design-principles.md` — the 9-dimension rubric used to grade scope quality, plus the "On aspirational fidelity" appendix that explains how the aspiration_match layer composes with rubric scoring.
+- `references/loop-mechanics.md` — checkpoint pattern, stall detection, regression restart, issue-identity matching rules, triple-gate exit precedence, and the aspiration-match cross-iteration handoff.
+- `references/spec-template.md` — historical skeleton kept as advisory reading. The aspirational-spec generated in Phase 1.5 supersedes this template; `brainstorm-and-execute` writes the iteration spec autonomously and is not required to follow this skeleton. Read it only to understand what dimensions a good iter spec covers.
+- `~/.claude/skills/visual-qa/references/report-schema.md` — authoritative schema for parsing visual-qa reports, including the `inventory`, `inventory_coverage`, and `aspiration_match` frontmatter fields.
 - `~/.claude/skills/brainstorm-and-execute/SKILL.md` — the autonomous orchestrator invoked once per iteration. Read its `<HARD-GATE>` and the four hard invariants in its `references/invariants.md` so you understand what `brainstorm-and-execute` enforces on its own.
 
 ## Phase 0 — Setup
@@ -56,62 +61,209 @@ Transform the scoped UI surface from its current state to one that scores at lea
 ## Phase 1 — Initial QA
 
 - [ ] 4. Obtain the baseline report: if `--report <path>` was passed and the file exists, use it; otherwise invoke `visual-qa <scope>` via the `Skill` tool and wait for the report.
-- [ ] 5. Parse report frontmatter. Validate schema. Extract issue list. If zero `critical` and zero `major` issues already, jump to Phase 4.
+- [ ] 5. Parse report frontmatter. Validate schema. Extract issue list, plus the new `inventory` and `inventory_coverage` fields that seed Phase 1.5. If zero `critical` and zero `major` issues already AND `inventory_coverage.complete: true` AND no `aspirational-spec` is on disk yet for this scope, still proceed to Phase 1.5 — the aspirational layer must run on every full visual-refine session because principle-clean does not imply aspiration-clean.
+
+## Phase 1.5 — Aspirational Redesign
+
+This phase generates the implementation target before any code changes. It produces a per-component standalone HTML mockup and a consolidated aspirational-spec markdown that becomes the authoritative input to Phase 2.
+
+### 1.5.A — Frame coverage validation
+
+- [ ] 6. Read the `inventory_coverage` block from the iter-N report frontmatter. The gate-pass condition is:
+
+    ```
+    inventory_coverage.complete == true
+    AND inventory_coverage.low_quality_frames is empty
+    AND inventory_coverage.missing_states is empty
+    AND inventory_coverage.missing_transitions is empty
+    ```
+
+    If all four hold, proceed to step 8 (1.5.C). Otherwise build the **gap list** by concatenating `missing_states`, `missing_transitions`, and `low_quality_frames` (in that order) and proceed to step 7 (1.5.B). `inventory_coverage.instant_transitions` is informational here and does NOT trigger recapture; it is consumed by Phase 3's triple-gate.
+
+### 1.5.B — Recapture (CONDITIONAL, MAX 1)
+
+- [ ] 7. Invoke `visual-qa --recapture-only <gap-list>` via the `Skill` tool. This is a NEW visual-qa internal mode that skips inventory enumeration and records ONLY the listed gaps, writing a supplemental report. Merge the supplemental coverage into the iter-N coverage view in memory. **Cap: 1 recapture per visual-refine run.** If after the merge any gap remains in `missing_states`, `missing_transitions`, or `low_quality_frames`, abort to Phase 6 with status `aborted-frame-coverage` and skip Phases 2–5; the final report enumerates the unresolved gaps and tells the user what to inspect.
+
+### 1.5.C — Per-component aspirational generation (parallel, self-honesty cap 3)
+
+- [ ] 8. Dispatch one parallel subagent per component listed in `inventory.components` via `superpowers:dispatching-parallel-agents`. Each subagent receives:
+    - The component's frame screenshots and DOM snapshots (paths) from the iter-N report.
+    - The component's inventory entry (`{id, states, transitions}`).
+    - `references/design-principles.md` (the rubric and the Part 3 anti-pattern blacklist).
+    - The component-id slug and the `<scope-slug>` for output paths.
+
+    Each subagent MUST execute these five steps and emit them as its return payload:
+
+    1. **Current-state description.** One short line per applicable rubric dimension summarizing how the captured frames score against the rubric.
+    2. **Aspirational description.** What the component should look like at 3/3 across applicable dimensions, with **at least 2 named real-world references** drawn from `Linear`, `Stripe`, `Apple HIG`, `Vercel`, `Conductor`, `Arc`, `Raycast`, plus a one-line reason each is cited (e.g., "Linear: dense workspace chrome with deliberate negative space"; "Raycast: keyboard-first command palette with hairline divider hierarchy").
+    3. **Standalone HTML mockup.** Write to `docs/qa/aspirational/<scope-slug>/<component-id>.html`. Self-contained: CSS in `<style>`, no external runtime, no network fetches, viewport sized to the component's natural canvas. Render multiple states side-by-side when relevant (e.g., default + hover + active for a button; expanded + collapsed for a sidebar).
+    4. **Self-honesty pass.** Open the just-written mockup via Chrome MCP `new_page`/`navigate_page`, screenshot via `take_screenshot`, then score the screenshot against the rubric and the Part 3 anti-pattern blacklist. If any anti-pattern is violated (banned font as display: Inter, Roboto, Arial, bare system-ui; `transition: all 0.3s ease`; purple-on-white gradient; default Tailwind shadow on its own; generic empty-state phrasing; AAA-contrast violation on a primary CTA), regenerate the mockup. **Cap: 3 regenerations per component.** After 3 failed attempts, mark `aspirational_quality: degraded` for that component, ship the latest attempt as-is, and continue. Degraded components surface in the Phase 6 final report.
+    5. **Concrete deltas list.** 5–10 specific code-level changes the implementation must make to move from the captured current state to the aspirational mockup (e.g., "Replace topbar `border-bottom: 1px solid var(--border)` with conditional border that disappears on home", "Reduce sidebar dashboard label from 18px to 13px and align baseline with sibling rows", "Add hairline divider between density-card rows").
+
+### 1.5.D — Consolidation
+
+- [ ] 9. Concatenate every subagent's output into `docs/qa/<date>-visual-refine-<scope-slug>-aspirational-spec.md`. The file MUST start with this frontmatter:
+
+    ```yaml
+    ---
+    skill: visual-refine
+    phase: 1.5
+    date: <YYYY-MM-DD>
+    scope_slug: <scope-slug>
+    iter_baseline: <absolute-path-to-iter-N-report>
+    inventory_source: <iter-N-frontmatter-snippet>
+    mockup_dir: docs/qa/aspirational/<scope-slug>/
+    components_total: <int>
+    components_with_mockup: <int>
+    components_degraded: <int>
+    ---
+    ```
+
+    Below the frontmatter, one section per component, in the order they appear in `inventory.components`. Each section header is `## <component-id>` and contains the four prose blocks (current-state, aspirational, mockup link, concrete deltas) plus a `aspirational_quality:` line marked `ok` or `degraded`.
+
+### 1.5.E — Phase 1.5 exit gate
+
+- [ ] 10. Evaluate the gate. Pass requires:
+    - `inventory_coverage.complete: true` (after 1.5.B recapture if any).
+    - `components_degraded < 0.2 * components_total` (strict less-than). At exactly 20% the gate fires the abort path; the `< 20%` rule is intentional, not a rounding convention.
+    - `docs/qa/<date>-visual-refine-<scope-slug>-aspirational-spec.md` exists with one section per component in `inventory.components`.
+
+    Failure modes:
+    - `aborted-frame-coverage`: gaps remain after the 1 allowed recapture in 1.5.B.
+    - `aborted-aspirational-quality`: too many components degraded in 1.5.C.
+
+    Both abort paths skip Phases 2–5 entirely and jump to Phase 6 with the corresponding status; the final report lists what failed and what the user should inspect (e.g., the inventory entry that produced an unreachable component, the recurring blacklist violation in degraded mockups). On pass, proceed to Phase 2.
 
 ## Phase 2 — Iteration N: autonomous spec + execute
 
-- [ ] 6. Build the prompt for `brainstorm-and-execute`. The prompt is a free-text idea (NOT a `--spec` path) that gives `brainstorm-and-execute` enough context to autonomously brainstorm, score decisions, and write its own spec. Construct it as:
+- [ ] 11. Build the prompt for `brainstorm-and-execute`. The prompt is a free-text idea (NOT a `--spec` path) that gives `brainstorm-and-execute` enough context to autonomously brainstorm, score decisions, and write its own spec — but now anchored on the aspirational-spec rather than the principle-only issue list. Construct it as:
 
     ```
-    Resolve the visual-qa issues listed in <absolute-path-to-iter-N-report>
-    for scope "<scope-slug>", iteration <N> of visual-refine. The report's
-    YAML frontmatter contains the issue list with dimension, tag, severity,
-    and rubric_target. Group fixes by dimension where sensible. Honor the
-    9-dimension rubric in ~/.claude/skills/visual-refine/references/design-principles.md
-    when scoring tradeoffs. Lessons from previous attempt (if any):
-    <quoted diagnostic note from regression restart, or "none">.
+    Implement the aspirational redesign for scope "<scope-slug>",
+    iteration <N> of visual-refine.
+
+    Aspirational spec: <absolute-path-to-aspirational-spec-md>
+    Mockup directory: <absolute-path-to-docs/qa/aspirational/<scope-slug>/>
+    Iter baseline report: <absolute-path-to-iter-N-report>
+
+    Components to address (priority order, highest-delta first):
+      1. <component-id-1> — see section + mockup
+      2. <component-id-2> — see section + mockup
+      3. <component-id-3> — see section + mockup
+      ... (top N by rubric delta from iter-N; full list in the spec)
+
+    For each component:
+    - The mockup HTML at docs/qa/aspirational/<scope-slug>/<component>.html
+      is the visual target. Open it in Chrome to inspect its rendering.
+    - Do not deviate from the mockup intent without justification recorded
+      as a decision file under docs/superpowers/decisions/<bae-slug>/.
+    - The "Concrete deltas" list in each spec section is the implementation
+      hint.
+    - Honor the 9-dimension rubric in
+      ~/.claude/skills/visual-refine/references/design-principles.md.
+
+    Lessons from previous attempt (if any):
+    <quoted diagnostic note from regression restart, OR list of components
+    that failed aspiration_match in the preceding iteration with the
+    auditor's notes verbatim, OR "none">.
+
+    Group fixes by component (not by dimension). The aspirational spec is
+    authoritative; the iter-N issue list is informational baseline only.
     ```
 
     Save this prompt verbatim into the eventual final report so the user can audit what brainstorm-and-execute was asked to do.
 
-- [ ] 7. Invoke `brainstorm-and-execute` via the `Skill` tool (or `/brainstorm-and-execute` slash command) with the prompt from step 6 plus these flags:
+- [ ] 12. Invoke `brainstorm-and-execute` via the `Skill` tool (or `/brainstorm-and-execute` slash command) with the prompt from step 11 plus these flags:
        - `--no-simplify` (HARD-GATE requirement; final refactor runs in Phase 4)
-       - `--budget <iter-budget>` (default 30 minutes per iteration; configurable via `--iter-budget`)
-       - Do NOT pass `--spec` or `--plan`. The autonomous brainstorm phase MUST run so that `brainstorm-and-execute` produces the iter spec from the visual-qa issue list itself, runs its own spec-review (3 cycles) and plan-review (2 cycles), and dispatches parallel-wave execution.
+       - `--budget <iter-budget>` (default 60 minutes per iteration; configurable via `--iter-budget`)
+       - Do NOT pass `--spec` or `--plan`. The autonomous brainstorm phase MUST run so that `brainstorm-and-execute` produces the iter spec from the aspirational-spec + visual-qa issue list itself, runs its own spec-review (3 cycles) and plan-review (2 cycles), and dispatches parallel-wave execution.
        Wait for the run to complete. Read its run report at `docs/superpowers/runs/YYYY-MM-DD-<bae-slug>-run.md` and capture the `outcome` field. Acceptable outcomes for this phase: `success`, `success-without-simplify`, `no-tasks-needed`. Any other outcome (`aborted-gate-failure`, `budget-exhausted`, `spec-review-exhausted`, `plan-review-exhausted`, `aborted-invariant-violation`) → log `iter-aborted-by-bae:<outcome>` in the eventual final report and break out of the loop early to Phase 4. Then verify the wrapper invariant: `git rev-parse HEAD` must equal `INITIAL_SHA` (it should, because `brainstorm-and-execute` enforces this internally). If it does not, `git reset --soft "$INITIAL_SHA"` and log `commit-undone-phase-2-iter<N>` in the final report. This wrapper checkpoint is defense-in-depth; the inner skill already enforces the invariant.
 
 ## Phase 3 — QA loop
 
-- [ ] 8. Invoke `visual-qa <scope>` via the `Skill` tool. The report is written with suffix `-iter<N+1>`.
-- [ ] 9. Compare iter `N` vs iter `N+1` and evaluate branches in this exact order:
-  - If iter `N+1` has zero `critical` and zero `major` → exit loop, go to Phase 4.
-  - Else if `N+1 >= 2` and `avg_rubric` did not improve versus iter `N` → increment `STALLED_COUNT`; if `STALLED_COUNT >= 2`, exit loop to Phase 4 and document `loop-stalled` in the final report. (The stall check requires at least two iterations of history; it never fires at `N=1`.)
-  - Else if iteration number reaches `MAX_ITER = 5` → exit loop to Phase 4 and document `iter-cap-hit`.
-  - Else → `N += 1`, return to Phase 2 with the new report as baseline.
+- [ ] 13. Invoke `visual-qa <scope> --aspirational-spec <absolute-path-to-aspirational-spec-md>` via the `Skill` tool. The report is written with suffix `-iter<N+1>`. Passing `--aspirational-spec` causes visual-qa to populate the `aspiration_match` frontmatter array (one entry per component in the aspirational-spec) in addition to its standard frontmatter.
+- [ ] 14. Compare iter `N` vs iter `N+1` against the **triple-gate exit** and evaluate branches in this exact order (this replaces the historical single-gate exit; see `references/loop-mechanics.md` §"Phase 3 loop exit precedence" for the canonical version):
+
+    ```
+    1. CLEAN EXIT — all four conditions must hold:
+         iter_N+1.summary.critical == 0
+         AND iter_N+1.summary.major == 0
+         AND every aspiration_match.match == "yes"
+         AND no transition where expected_animated == yes appears in
+             iter_N+1.inventory_coverage.instant_transitions
+       → exit loop, go to Phase 4.
+
+    2. STALL — N+1 >= 2 AND
+         avg_rubric_delta(iter_N → iter_N+1) == 0
+         AND aspiration_match_delta(iter_N → iter_N+1) == 0
+         (no rubric improvement AND no new aspiration_match: yes)
+       → STALLED_COUNT += 1.
+       If STALLED_COUNT >= 2 → exit loop to Phase 4 with `loop-stalled`.
+       (Stall check requires at least two iterations of history; never
+       fires at N=1.)
+
+    3. ITER CAP — iteration_number >= MAX_ITER (= 5)
+       → exit loop to Phase 4 with `iter-cap-hit`.
+
+    4. CONTINUE — N += 1, return to Phase 2 with the new iter-N+1 report
+       as baseline AND the verbatim list of components with
+       aspiration_match: no in iter-N+1 included in the next prompt's
+       "lessons from previous attempt" block. Each entry must carry the
+       auditor's notes verbatim so the next iteration knows what concrete
+       deltas remain.
+    ```
 
 ## Phase 4 — Final refactor
 
-- [ ] 10. Invoke `requesting-code-review` skill against the full uncommitted diff versus `INITIAL_SHA`.
-- [ ] 11. Address review feedback inline (no new spec). These are technical refinements, not design changes.
-- [ ] 12. Invoke the `simplify` skill on the uncommitted diff. Apply simplifications in place. This is the only simplify pass in the run — `brainstorm-and-execute` was invoked with `--no-simplify` per iteration precisely so the final simplify can operate on the entire cross-iteration diff in one pass. Then checkpoint: `git reset --soft $INITIAL_SHA` if HEAD changed. Log if so.
+- [ ] 15. Invoke `requesting-code-review` skill against the full uncommitted diff versus `INITIAL_SHA`. The diff under review now includes the aspirational-spec markdown and the per-component mockup HTML files; both are in scope of the review for completeness even though they are documentation artifacts.
+- [ ] 16. Address review feedback inline (no new spec). These are technical refinements, not design changes.
+- [ ] 17. Invoke the `simplify` skill on the uncommitted diff. Apply simplifications in place. This is the only simplify pass in the run — `brainstorm-and-execute` was invoked with `--no-simplify` per iteration precisely so the final simplify can operate on the entire cross-iteration diff in one pass. Then checkpoint: `git reset --soft $INITIAL_SHA` if HEAD changed. Log if so.
 
 ## Phase 5 — Anti-regression verification
 
-- [ ] 13. Invoke `visual-qa <scope>` one final time; report suffix `-post-refactor`.
-- [ ] 14. Diff issue ids against the last green iter report from Phase 3:
-  - If the post-refactor report introduces no new issue ids → done, go to Phase 6.
+- [ ] 18. Invoke `visual-qa <scope> --aspirational-spec <absolute-path-to-aspirational-spec-md>` one final time; report suffix `-post-refactor`. Passing `--aspirational-spec` ensures the post-refactor report carries `aspiration_match` so the regression check below can detect aspiration regression as well as principle regression.
+- [ ] 19. Diff against the last green iter report from Phase 3:
+  - **Principle regression**: any new issue id (by `(dimension, tag, title)` identity) that did not exist in the green iter report.
+  - **Aspiration regression**: any component whose `aspiration_match` flipped from `yes` in the last green iter report to `no` in the post-refactor report. (Identity is keyed on `component_id`; see `references/loop-mechanics.md` §"Issue identity matching across reports".)
+  - If neither principle regression nor aspiration regression is detected → done, go to Phase 6.
   - Otherwise regression detected:
-    - a. Write diagnostic note to `/tmp/visual-refine-regression-<timestamp>.md` listing new issue ids and evidence.
+    - a. Write diagnostic note to `/tmp/visual-refine-regression-<timestamp>.md` listing new issue ids, components that lost aspiration_match, and evidence.
     - b. `git stash push --include-untracked --message "visual-refine-regression-<scope-slug>-<timestamp>"`.
     - c. `git reset --hard $INITIAL_SHA`.
     - d. `RESTART_COUNT += 1`. If `RESTART_COUNT > 2`, abort and write final report with status `aborted-regression-loop`, listing preserved stashes.
-    - e. Otherwise restart from Phase 1, injecting the diagnostic note into the next spec's "lessons from previous attempt" section.
+    - e. Otherwise restart from Phase 1, injecting the diagnostic note (including the aspiration regressions verbatim) into the next spec's "lessons from previous attempt" section.
 
 ## Phase 6 — Final report
 
-- [ ] 15. Write `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md` listing: all iter reports, every per-iteration `brainstorm-and-execute` run-report path and its `outcome`, issues resolved, issues remaining (if caps hit), commits undone (if any), regressions detected (if any), stashes preserved (if any).
-- [ ] 16. Final verify: `git rev-parse HEAD` must equal `INITIAL_SHA`. If not, write critical alert into the report and tell the user what to inspect.
-- [ ] 17. Exit. The user decides when to commit the resulting changes.
+- [ ] 20. Write `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md` listing: all iter reports, every per-iteration `brainstorm-and-execute` run-report path and its `outcome`, issues resolved, issues remaining (if caps hit), commits undone (if any), regressions detected (if any), stashes preserved (if any). Include the verbatim Phase 2 prompt(s) so the user can audit what was asked.
+- [ ] 21. Append the **Aspirational fidelity outcomes** section, one row per component:
+
+    ```markdown
+    ## Aspirational fidelity outcomes
+
+    | Component | iter-final aspiration_match | notes |
+    |---|---|---|
+    | topbar | yes | matches mockup spacing + branch chip hierarchy |
+    | sidebar-row | yes | hover state + menu-open state both match |
+    | settings-appearance | no | density cards still missing wireframe content; carry to next iter |
+    ```
+
+    Each row's `iter-final aspiration_match` is taken from the last visual-qa report whose `--aspirational-spec` was set (post-refactor if Phase 5 ran cleanly; otherwise the last iter-N+1 from Phase 3). The `notes` column is the auditor's verbatim notes for that component in that report.
+
+- [ ] 22. Append the **Components with degraded aspirational mockups (from Phase 1.5)** section:
+
+    ```markdown
+    ## Components with degraded aspirational mockups (from Phase 1.5)
+
+    (Empty when zero, OR list of components where the mockup hit the cap of
+    3 regenerations and shipped degraded — these are seeds for human
+    review.)
+    ```
+
+    Source: the `aspirational_quality: degraded` lines in the consolidated aspirational-spec from Phase 1.5.D. When zero components are degraded, write the literal "(none)" rather than omitting the section, so the absence is visible.
+
+- [ ] 23. Final verify: `git rev-parse HEAD` must equal `INITIAL_SHA`. If not, write critical alert into the report and tell the user what to inspect.
+- [ ] 24. Exit. The user decides when to commit the resulting changes.
 
 ## Flow diagram
 
@@ -121,18 +273,24 @@ digraph visual_refine {
     "Phase 0: Snapshot INITIAL_SHA" [shape=box];
     "Phase 0: Load design-principles" [shape=box];
     "Phase 1: Get baseline report" [shape=box];
-    "Phase 1: Parse report" [shape=box];
-    "Already clean?" [shape=diamond];
-    "Phase 2: Build idea prompt from iter N report" [shape=box];
+    "Phase 1: Parse report (incl. inventory)" [shape=box];
+    "Phase 1.5.A: Frame coverage validation" [shape=box];
+    "Coverage complete?" [shape=diamond];
+    "Phase 1.5.B: visual-qa --recapture-only (max 1)" [shape=box];
+    "Coverage complete after recapture?" [shape=diamond];
+    "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" [shape=box];
+    "Phase 1.5.D: Consolidate aspirational-spec" [shape=box];
+    "Phase 1.5.E: degraded < 20%?" [shape=diamond];
+    "Phase 2: Build aspirational prompt for iter N" [shape=box];
     "Phase 2: brainstorm-and-execute (autonomous, --no-simplify)" [shape=box];
     "Phase 2: Wrapper HEAD checkpoint" [shape=box];
     "BAE outcome OK?" [shape=diamond];
-    "Phase 3: Run visual-qa iter N+1" [shape=box];
-    "Exit branch?" [shape=diamond];
+    "Phase 3: visual-qa iter N+1 --aspirational-spec" [shape=box];
+    "Triple-gate exit branch?" [shape=diamond];
     "Phase 4: requesting-code-review" [shape=box];
     "Phase 4: simplify (final, full diff)" [shape=box];
     "Phase 4: Checkpoint HEAD" [shape=box];
-    "Phase 5: Run visual-qa post-refactor" [shape=box];
+    "Phase 5: visual-qa post-refactor --aspirational-spec" [shape=box];
     "Regression detected?" [shape=diamond];
     "Phase 5: stash + reset --hard" [shape=box];
     "RESTART_COUNT > 2?" [shape=diamond];
@@ -140,20 +298,26 @@ digraph visual_refine {
     "Phase 6: Final report (success)" [shape=box];
     "End" [shape=doublecircle];
 
-    "Start" -> "Phase 0: Snapshot INITIAL_SHA" -> "Phase 0: Load design-principles" -> "Phase 1: Get baseline report" -> "Phase 1: Parse report" -> "Already clean?";
-    "Already clean?" -> "Phase 4: requesting-code-review" [label="yes"];
-    "Already clean?" -> "Phase 2: Build idea prompt from iter N report" [label="no"];
-    "Phase 2: Build idea prompt from iter N report" -> "Phase 2: brainstorm-and-execute (autonomous, --no-simplify)" -> "Phase 2: Wrapper HEAD checkpoint" -> "BAE outcome OK?";
-    "BAE outcome OK?" -> "Phase 3: Run visual-qa iter N+1" [label="success | success-without-simplify | no-tasks-needed"];
+    "Start" -> "Phase 0: Snapshot INITIAL_SHA" -> "Phase 0: Load design-principles" -> "Phase 1: Get baseline report" -> "Phase 1: Parse report (incl. inventory)" -> "Phase 1.5.A: Frame coverage validation" -> "Coverage complete?";
+    "Coverage complete?" -> "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" [label="yes"];
+    "Coverage complete?" -> "Phase 1.5.B: visual-qa --recapture-only (max 1)" [label="no"];
+    "Phase 1.5.B: visual-qa --recapture-only (max 1)" -> "Coverage complete after recapture?";
+    "Coverage complete after recapture?" -> "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" [label="yes"];
+    "Coverage complete after recapture?" -> "Phase 6: Final report (aborted)" [label="no; aborted-frame-coverage"];
+    "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" -> "Phase 1.5.D: Consolidate aspirational-spec" -> "Phase 1.5.E: degraded < 20%?";
+    "Phase 1.5.E: degraded < 20%?" -> "Phase 2: Build aspirational prompt for iter N" [label="yes"];
+    "Phase 1.5.E: degraded < 20%?" -> "Phase 6: Final report (aborted)" [label="no; aborted-aspirational-quality"];
+    "Phase 2: Build aspirational prompt for iter N" -> "Phase 2: brainstorm-and-execute (autonomous, --no-simplify)" -> "Phase 2: Wrapper HEAD checkpoint" -> "BAE outcome OK?";
+    "BAE outcome OK?" -> "Phase 3: visual-qa iter N+1 --aspirational-spec" [label="success | success-without-simplify | no-tasks-needed"];
     "BAE outcome OK?" -> "Phase 4: requesting-code-review" [label="aborted; log iter-aborted-by-bae"];
-    "Phase 3: Run visual-qa iter N+1" -> "Exit branch?";
-    "Exit branch?" -> "Phase 4: requesting-code-review" [label="clean"];
-    "Exit branch?" -> "Phase 4: requesting-code-review" [label="stalled"];
-    "Exit branch?" -> "Phase 4: requesting-code-review" [label="iter-cap"];
-    "Exit branch?" -> "Phase 2: Build idea prompt from iter N report" [label="continue"];
-    "Phase 4: requesting-code-review" -> "Phase 4: simplify (final, full diff)" -> "Phase 4: Checkpoint HEAD" -> "Phase 5: Run visual-qa post-refactor" -> "Regression detected?";
-    "Regression detected?" -> "Phase 6: Final report (success)" [label="no"];
-    "Regression detected?" -> "Phase 5: stash + reset --hard" [label="yes"];
+    "Phase 3: visual-qa iter N+1 --aspirational-spec" -> "Triple-gate exit branch?";
+    "Triple-gate exit branch?" -> "Phase 4: requesting-code-review" [label="CLEAN EXIT (all 3 conjuncts)"];
+    "Triple-gate exit branch?" -> "Phase 4: requesting-code-review" [label="STALL (>=2 stalls)"];
+    "Triple-gate exit branch?" -> "Phase 4: requesting-code-review" [label="ITER CAP"];
+    "Triple-gate exit branch?" -> "Phase 2: Build aspirational prompt for iter N" [label="CONTINUE (carry aspiration_match: no)"];
+    "Phase 4: requesting-code-review" -> "Phase 4: simplify (final, full diff)" -> "Phase 4: Checkpoint HEAD" -> "Phase 5: visual-qa post-refactor --aspirational-spec" -> "Regression detected?";
+    "Regression detected?" -> "Phase 6: Final report (success)" [label="no (incl. no aspiration regression)"];
+    "Regression detected?" -> "Phase 5: stash + reset --hard" [label="yes (principle OR aspiration)"];
     "Phase 5: stash + reset --hard" -> "RESTART_COUNT > 2?";
     "RESTART_COUNT > 2?" -> "Phase 6: Final report (aborted)" [label="yes"];
     "RESTART_COUNT > 2?" -> "Phase 1: Get baseline report" [label="no"];
@@ -166,21 +330,23 @@ digraph visual_refine {
 
 | Phase | Skill invoked | Purpose |
 |---|---|---|
-| `visual-refine` Phase 2 | `brainstorm-and-execute` (autonomous; `--no-simplify --budget`; no `--spec`/`--plan`) | Autonomous brainstorm → spec → spec-review → plan → plan-review → parallel-wave execute → final HEAD checkpoint, all in one call. Spec is generated from the visual-qa issue list, not supplied by visual-refine. |
-| `visual-refine` Phase 4 | `requesting-code-review` | Review uncommitted diff (full cross-iteration) |
+| `visual-refine` Phase 1.5.C | `superpowers:dispatching-parallel-agents` | Dispatch one subagent per inventoried component to generate aspirational text + standalone HTML mockup with self-honesty regeneration cap of 3 |
+| `visual-refine` Phase 2 | `brainstorm-and-execute` (autonomous; `--no-simplify --budget`; no `--spec`/`--plan`) | Autonomous brainstorm → spec → spec-review → plan → plan-review → parallel-wave execute → final HEAD checkpoint, all in one call. Spec is generated from the aspirational-spec + visual-qa issue list, not supplied by visual-refine. |
+| `visual-refine` Phase 4 | `requesting-code-review` | Review uncommitted diff (full cross-iteration, including aspirational artifacts) |
 | `visual-refine` Phase 4 | `simplify` | Clean up uncommitted diff (final pass; per-iteration simplify is suppressed via `brainstorm-and-execute --no-simplify`) |
-| `visual-refine` Phases 1, 3, 5 | `visual-qa` (skill) | Audit the scoped surface |
+| `visual-refine` Phases 1, 1.5.B, 3, 5 | `visual-qa` (skill) | Audit the scoped surface; Phases 3 and 5 pass `--aspirational-spec` so the report includes `aspiration_match`; Phase 1.5.B uses `--recapture-only` to fill coverage gaps |
 
-`brainstorm-and-execute` internally invokes its own brainstorm protocol (decision files + rubric synthesis), `spec-document-reviewer`, `superpowers:writing-plans`, and `superpowers:subagent-driven-development`. `visual-refine` no longer dispatches any of those directly — every per-iteration brainstorm → spec → plan → execute concern is encapsulated by `brainstorm-and-execute`'s own gates and invariants. visual-refine's contribution is the visual-qa issue list, the wrapper around looping/regression, and the final cross-iteration refactor.
+`brainstorm-and-execute` internally invokes its own brainstorm protocol (decision files + rubric synthesis), `spec-document-reviewer`, `superpowers:writing-plans`, and `superpowers:subagent-driven-development`. `visual-refine` no longer dispatches any of those directly — every per-iteration brainstorm → spec → plan → execute concern is encapsulated by `brainstorm-and-execute`'s own gates and invariants. visual-refine's contribution is the visual-qa issue list, the aspirational-spec generated in Phase 1.5, the wrapper around looping/regression, and the final cross-iteration refactor.
 
 Both skills reference `verification-before-completion` implicitly through their final invariants.
 
 ## On the relationship between the two skills' invariants
 
-`brainstorm-and-execute` enforces its own four hard invariants (HEAD == INITIAL_SHA, gate-between-waves, wall-clock budget, bounded review retries). `visual-refine` adds three more on top (no commits across the FULL run, MAX_ITER cap, MAX_RESTARTS cap). The two skills' invariants compose cleanly:
+`brainstorm-and-execute` enforces its own four hard invariants (HEAD == INITIAL_SHA, gate-between-waves, wall-clock budget, bounded review retries). `visual-refine` adds more on top (no commits across the FULL run, MAX_ITER cap, MAX_RESTARTS cap, Phase 1.5 must run, triple-gate at Phase 3 exit, recapture cap = 1, mockup regeneration cap = 3, degraded threshold = 20%). The two skills' invariants compose cleanly:
 
-- The per-iteration `brainstorm-and-execute` HEAD invariant guarantees that each iteration starts and ends at the same SHA. `visual-refine`'s wrapper checkpoint at step 7 is therefore expected to be a no-op; if it ever fires, something inside `brainstorm-and-execute` failed its own invariant and that should be logged.
-- The per-iteration budget (`--budget`) caps the wall-clock cost of one iteration. `MAX_ITER` caps the number of iterations. The product is the worst-case total budget.
+- The per-iteration `brainstorm-and-execute` HEAD invariant guarantees that each iteration starts and ends at the same SHA. `visual-refine`'s wrapper checkpoint at step 12 is therefore expected to be a no-op; if it ever fires, something inside `brainstorm-and-execute` failed its own invariant and that should be logged.
+- The per-iteration budget (`--budget`) caps the wall-clock cost of one iteration. `MAX_ITER` caps the number of iterations. The product (plus Phase 1.5 generation cost, ~25 min) is the worst-case total budget — `MAX_ITER × 60 + 25 ≈ 325 min` at the new defaults.
 - `brainstorm-and-execute`'s internal review retries (3 spec, 2 plan) operate WITHIN one iteration. `MAX_RESTARTS` caps how many times the entire `visual-refine` run restarts after an anti-regression failure. Different scopes; no conflict.
+- The recapture cap (1) and mockup regeneration cap (3) are local to Phase 1.5 and never multiply into the per-iteration budget. Their purpose is to bound the auto-honesty loop so the skill cannot silently degrade by re-trying generic outputs indefinitely.
 
-The HARD-GATE forbids invoking `brainstorm-and-execute` with `--spec` or `--plan` (which would skip the autonomous brainstorm phase that produces the iter spec from the visual-qa issue list) and without `--no-simplify` (which would simplify per-iteration and contaminate the final cross-iteration simplify pass).
+The HARD-GATE forbids invoking `brainstorm-and-execute` with `--spec` or `--plan` (which would skip the autonomous brainstorm phase that produces the iter spec from the aspirational-spec + visual-qa issue list) and without `--no-simplify` (which would simplify per-iteration and contaminate the final cross-iteration simplify pass). It also forbids skipping Phase 1.5 entirely or exiting Phase 3 on a single gate — both load-bearing for the aspirational-fidelity guarantee.
