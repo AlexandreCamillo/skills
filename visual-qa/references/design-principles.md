@@ -338,3 +338,20 @@ The situations below are the ones where analysts most often score incorrectly. E
 This file will be revised. Every principle, every dimension, every anti-pattern, and every anchor is subject to change when the team learns something new. The revision channel is a pull request against this document's canonical location, reviewed by at least one person who has used the rubric in anger. Drive-by edits that soften the rubric without evidence are rejected. Drive-by edits that sharpen the rubric with concrete examples are welcomed.
 
 The quality of the reports produced by `visual-qa` and the specs produced by `visual-refine` are strictly bounded by the quality of this document. Treat it accordingly.
+
+---
+
+## Appendix — On aspirational fidelity
+
+When `visual-refine` runs in aspirational mode, it generates a per-component aspirational target — a standalone HTML mockup plus a written description — before any code is changed, and `visual-qa` (when invoked with `--aspirational-spec <path>`) emits an `aspiration_match` field comparing each implemented component to its mockup. This appendix exists to make explicit how `aspiration_match` relates to the nine-dimension rubric defined in Part 2.
+
+`aspiration_match` is a layer **above** the rubric, not a replacement for it. The rubric continues to grade principle-level adherence: whether typography uses a display+body pairing on a modular scale, whether color has dominance plus a disciplined accent, whether motion is curved and tuned, and so on. Those dimensions are universal to the project and do not change when an aspirational target is in play. `aspiration_match`, by contrast, grades implementation fidelity to a specific aspirational target produced by the skill itself: does the rendered component visually match the mockup the skill committed to in Phase 1.5?
+
+The two layers answer different questions:
+
+- The rubric answers: *does this surface satisfy the project's taste bar in absolute terms?* A surface can be at 3 on every dimension and still differ from a specific aspirational mockup — the principles do not pin the surface to a particular composition.
+- `aspiration_match` answers: *does this surface match the visual target the skill set for itself in this iteration?* A surface that strays from the mockup — different layout, different states, different signature detail — fails this gate even if its rubric scores are healthy.
+
+Both gates must pass. The triple-gate exit criterion in `visual-refine` Phase 3 is `(0 critical AND 0 major) AND (every aspiration_match == yes) AND (no unintended instant transitions)`. A run that achieves the rubric floor but leaves any component with `aspiration_match: no` does not exit. Conversely, a run that matches the mockup pixel-for-pixel but introduces a rubric regression also does not exit. Neither layer is sufficient on its own.
+
+The rubric is the floor; the aspirational mockup is the ceiling for the current iteration. Nothing in this appendix relaxes the rubric, the scoring rules, the score anchors, the Part 3 anti-pattern blacklist, or the strictness biases stated above. All of those continue to apply unchanged when `aspiration_match` is in play. If a Phase 1.5 mockup itself violates a Part 3 anti-pattern (banned font without justification, `transition: all 0.3s ease`, purple-on-white gradient, default Tailwind shadow, generic empty state, AAA-contrast violation on the primary CTA), the mockup must be regenerated before it can serve as a target. The aspirational layer never grants permission to ship something the rubric would reject.
