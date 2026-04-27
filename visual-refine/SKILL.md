@@ -41,7 +41,7 @@ Transform the scoped UI surface from its current state to one that scores at lea
 
 - A consolidated report at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md`.
 - A Phase 1.5 aspirational-spec at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>-aspirational-spec.md` with one section per inventoried component.
-- A per-run mockup index at `docs/qa/aspirational/<scope-slug>/index.html` listing every component composite produced in this run with a small thumbnail iframe, the selected archetype + score, and a Copy-reference button per variation. This is the recommended entry point for browsing the run's artifacts.
+- A per-run mockup gallery at `docs/qa/aspirational/<scope-slug>/index.html` rendering every component's full `N`-variation grid at native size in one scrollable page. Each component block carries a Copy-reference button per variation and an `Open in dedicated page →` link that opens the per-component composite for focused inspection. This is the recommended entry point for browsing the run's artifacts: scroll to see every variation at full detail, click into a component only when you want a focused view.
 - Per-component composite HTML at `docs/qa/aspirational/<scope-slug>/<component-id>.html` rendering ALL N variations side-by-side in a CSS-Grid layout via iframes, with archetype label, `rubric_self_score`, quality badge, a Selected marker on the auto-chosen winner, a `← Index` header link back to `index.html`, and a Copy-reference button per panel that puts the canonical citation form on the clipboard. The composite is the primary artifact for human inspection and side-by-side comparison.
 - Per-component standalone HTML mockups under `docs/qa/aspirational/<scope-slug>/<component-id>/<variation-id>.html` (nested per-component directory; one HTML file per variation a-e). Each is openable in Chrome, self-contained, and serves as the iframe `src` for the composite. They remain on disk as audit/debug artifacts.
 - All intermediate `visual-qa` iter reports kept in `docs/qa/`.
@@ -163,19 +163,19 @@ This phase generates the implementation target before any code changes. It produ
 
     Open the composite in Chrome to verify it renders end-to-end (all iframes load, no `file://` cross-origin block since iframes are same-origin under the parent directory). The composite is referenced from the aspirational-spec markdown (1.5.E) as the primary mockup link per component.
 
+    The composite renders the same per-component grid that 1.5.D.2's index renders inside the component's block. The composite exists primarily as a **deep-link target** for "Open in dedicated page" from the index and as the **canonical citation anchor** the Copy-reference button writes — citing `<component-id>.html#variation-<id>` lands the reader on a focused page rather than the noisy gallery.
+
     **Canonical reference format** (used by the Copy button's `data-ref` and the monospace footer): `<absolute-path-to-composite-html>#variation-<id>`. The absolute path is computed at write-time as `path.resolve(<REPO_ROOT>, "docs/qa/aspirational", <scope-slug>, <component-id> + ".html")`. The anchor is exactly `#variation-` followed by the lowercase variation id. No `file://` prefix, no quoting. This is the string the user pastes into a chat message to cite a specific variation.
 
 ### 1.5.D.2 — Index assembly (per run)
 
-- [ ] 9c. After every component's composite is produced, write the per-run mockup index at `docs/qa/aspirational/<scope-slug>/index.html`. The index aggregates every component composite in one navigable page. It contains:
+- [ ] 9c. After every component's composite is produced, write the per-run **full-size mockup gallery** at `docs/qa/aspirational/<scope-slug>/index.html`. The index renders every component's **full N-variation grid at native size** in one scrollable page (no thumbnails, no scaling transforms — the user sees the same pixels they would see on the dedicated composite page). It contains:
 
-    - `<title>Mockup index — <scope-slug></title>` and a brief `<p>` intro naming the run scope and the iter-N report it derives from.
-    - One row per component, in `inventory.components` order. Each row has:
-      - `<h2><a href="<component-id>.html"><component-id></a></h2>` — clicking the heading opens the component's composite.
-      - A small thumbnail container `<div class="thumb">` holding `<iframe src="<component-id>.html" loading="lazy">` styled with `transform: scale(0.25); transform-origin: 0 0;` inside a fixed-size box (~320×200 visible). No screenshot tooling; the thumbnail IS the composite, just shrunk.
+    - `<title>Mockup gallery — <scope-slug></title>` and a brief intro `<p>` naming the run scope and the iter-N report it derives from, plus a one-line usage hint: "Scroll to browse every component. Click 'Open in dedicated page' on a component to focus it. Click any Copy reference button to put the canonical citation form on the clipboard."
+    - One `<section class="component-block">` per component, in `inventory.components` order. Each component block has:
+      - A header bar: `<h2 id="<component-id>"><component-id></h2>` + `<a class="more-detail" href="<component-id>.html">Open in dedicated page →</a>` link + a row of Copy-reference buttons (one per variation, in lexicographic id order). The `data-ref="<absolute-path-to-composite>#variation-<id>"` contract is unchanged from 1.5.D.1; the same inline script handles all buttons on the page.
       - A summary line: `Selected: <selected-variation-id> (<archetype>) · score <rubric_self_score> · alternates: <ids>`.
-      - A row of Copy-reference buttons, one per variation, in lexicographic id order. Same `data-ref="<absolute-path-to-composite>#variation-<id>"` contract as in the composite. Same inline script handles both pages.
-      - A direct `<a href="<component-id>.html">Open composite →</a>` link.
+      - **The full N-variation grid, identical in shape to what `<component-id>.html` renders.** Same CSS-Grid `grid-template-columns: repeat(auto-fit, minmax(420px, 1fr))`, same per-panel header (archetype + score + quality + Copy-reference button), same Selected badge + accent border on the winner, same iframes pointing at `<component-id>/<variation-id>.html` at the variation's natural canvas with `loading="lazy"`, same monospace footer with the citation string. The component block in the index and the standalone composite are visually interchangeable; the only difference is surrounding context.
     - A footer line: `Generated by visual-refine on <YYYY-MM-DD>. Absolute paths in copy buttons are resolved against <REPO_ROOT> = <absolute-path-of-repo-root>.` This makes the citation strings auditable.
     - Self-contained: inline `<style>` + inline `<script>` (the same Copy-reference handler used in the composites; ≤ 20 lines, no external deps). Uses `system-ui, -apple-system, sans-serif`.
 
@@ -233,7 +233,7 @@ This phase generates the implementation target before any code changes. It produ
 
     Aspirational spec: <absolute-path-to-aspirational-spec-md>
     Mockup directory: <absolute-path-to-docs/qa/aspirational/<scope-slug>/>
-    Mockup index: <absolute-path-to-docs/qa/aspirational/<scope-slug>/index.html>  # open this first to browse all components
+    Mockup index: <absolute-path-to-docs/qa/aspirational/<scope-slug>/index.html>  # full-size gallery: every component's N-variation grid at native size; "Open in dedicated page" links per component for focused inspection
     Iter baseline report: <absolute-path-to-iter-N-report>
 
     Components to address (priority order, highest-delta first):
