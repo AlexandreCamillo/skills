@@ -41,7 +41,8 @@ Transform the scoped UI surface from its current state to one that scores at lea
 
 - A consolidated report at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md`.
 - A Phase 1.5 aspirational-spec at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>-aspirational-spec.md` with one section per inventoried component.
-- Per-component composite HTML at `docs/qa/aspirational/<scope-slug>/<component-id>.html` rendering ALL N variations side-by-side in a CSS-Grid layout via iframes, with archetype label, `rubric_self_score`, quality badge, and a Selected marker on the auto-chosen winner. The composite is the primary artifact for human inspection and side-by-side comparison.
+- A per-run mockup index at `docs/qa/aspirational/<scope-slug>/index.html` listing every component composite produced in this run with a small thumbnail iframe, the selected archetype + score, and a Copy-reference button per variation. This is the recommended entry point for browsing the run's artifacts.
+- Per-component composite HTML at `docs/qa/aspirational/<scope-slug>/<component-id>.html` rendering ALL N variations side-by-side in a CSS-Grid layout via iframes, with archetype label, `rubric_self_score`, quality badge, a Selected marker on the auto-chosen winner, a `← Index` header link back to `index.html`, and a Copy-reference button per panel that puts the canonical citation form on the clipboard. The composite is the primary artifact for human inspection and side-by-side comparison.
 - Per-component standalone HTML mockups under `docs/qa/aspirational/<scope-slug>/<component-id>/<variation-id>.html` (nested per-component directory; one HTML file per variation a-e). Each is openable in Chrome, self-contained, and serves as the iframe `src` for the composite. They remain on disk as audit/debug artifacts.
 - All intermediate `visual-qa` iter reports kept in `docs/qa/`.
 - Per-iteration `brainstorm-and-execute` artifacts: one rubric (`docs/superpowers/decisions/<bae-slug>/rubric.md`), one set of decision files (`docs/superpowers/decisions/<bae-slug>/NN-*.md`), one autonomously-generated spec (`docs/superpowers/specs/<bae-slug>-design.md`), one plan (`docs/superpowers/plans/<bae-slug>-plan.md`), and one run report (`docs/superpowers/runs/<bae-slug>-run.md`).
@@ -148,17 +149,37 @@ This phase generates the implementation target before any code changes. It produ
 
 - [ ] 9b. After the selection step, assemble a composite HTML at `docs/qa/aspirational/<scope-slug>/<component-id>.html` that renders ALL `N` variations side-by-side via iframes. The composite is the primary artifact for human inspection; per-variation standalone files at `<component-id>/<variation-id>.html` remain on disk and serve as the iframe `src`. The composite has:
 
-    - Self-contained `<style>` block. NO external CSS, NO JS, NO non-system fonts. Use `system-ui, -apple-system, sans-serif`.
+    - Self-contained `<style>` block AND a tiny inline `<script>` (≤ 20 lines) that wires up Copy-reference buttons via `navigator.clipboard.writeText`. NO external CSS, NO external JS, NO non-system fonts. Use `system-ui, -apple-system, sans-serif`.
+    - **Header bar** at the top of `<body>`, before the grid: `<a class="back-to-index" href="index.html">← Index</a>` (relative link to the per-run index assembled in 1.5.D.2) followed by `<h1>Mockup variations — <component-id></h1>`.
     - CSS Grid layout: `display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 24px; padding: 32px;`. Neutral background (`#fafafa` light or `#0a0a0a` dark — match the variations' theme by sampling the first variation's `<body>` background).
     - One `<section class="panel">` per variation, in lexicographic id order (`a` first, then `b`, …):
-      - `<header>` containing: archetype name (e.g., "A — Minimal / Editorial"), `<span class="score">` with `rubric_self_score`, `<span class="quality">` rendering `ok` (green dot) or `degraded` (red dot + violation summary).
+      - `<header>` containing: archetype name (e.g., "A — Minimal / Editorial"), `<span class="score">` with `rubric_self_score`, `<span class="quality">` rendering `ok` (green dot) or `degraded` (red dot + violation summary), and a `<button class="copy-ref" data-ref="<absolute-path-to-composite>#variation-<id>">Copy reference</button>`. The button handler calls `navigator.clipboard.writeText(this.dataset.ref)` and momentarily flips its label to `Copied!` for 1.5 s.
       - The selected panel additionally includes `<span class="selected-badge">Selected</span>` and a 2px accent border (`box-shadow: inset 0 0 0 2px <accent>` works without Layout-affecting borders).
       - `<iframe src="<component-id>/<variation-id>.html" loading="lazy">` sized to the variation's natural canvas (default `width=1200 height=800`; if a variation's `<body>` declares an explicit `min-width`/`min-height`, use those).
+      - **Footer line** in monospace listing the citation string verbatim — `<code><absolute-path-to-composite>#variation-<id></code>` — as a manual-copy fallback when `navigator.clipboard` is unavailable.
     - Anchors per panel: `id="variation-a"`, `id="variation-b"`, etc., so Phase 6 alternates table can deep-link.
     - `<title>` element: `"Mockup variations — <component-id>"`.
     - The composite is deterministic: same inputs → same bytes. No timestamps, no random ids.
 
     Open the composite in Chrome to verify it renders end-to-end (all iframes load, no `file://` cross-origin block since iframes are same-origin under the parent directory). The composite is referenced from the aspirational-spec markdown (1.5.E) as the primary mockup link per component.
+
+    **Canonical reference format** (used by the Copy button's `data-ref` and the monospace footer): `<absolute-path-to-composite-html>#variation-<id>`. The absolute path is computed at write-time as `path.resolve(<REPO_ROOT>, "docs/qa/aspirational", <scope-slug>, <component-id> + ".html")`. The anchor is exactly `#variation-` followed by the lowercase variation id. No `file://` prefix, no quoting. This is the string the user pastes into a chat message to cite a specific variation.
+
+### 1.5.D.2 — Index assembly (per run)
+
+- [ ] 9c. After every component's composite is produced, write the per-run mockup index at `docs/qa/aspirational/<scope-slug>/index.html`. The index aggregates every component composite in one navigable page. It contains:
+
+    - `<title>Mockup index — <scope-slug></title>` and a brief `<p>` intro naming the run scope and the iter-N report it derives from.
+    - One row per component, in `inventory.components` order. Each row has:
+      - `<h2><a href="<component-id>.html"><component-id></a></h2>` — clicking the heading opens the component's composite.
+      - A small thumbnail container `<div class="thumb">` holding `<iframe src="<component-id>.html" loading="lazy">` styled with `transform: scale(0.25); transform-origin: 0 0;` inside a fixed-size box (~320×200 visible). No screenshot tooling; the thumbnail IS the composite, just shrunk.
+      - A summary line: `Selected: <selected-variation-id> (<archetype>) · score <rubric_self_score> · alternates: <ids>`.
+      - A row of Copy-reference buttons, one per variation, in lexicographic id order. Same `data-ref="<absolute-path-to-composite>#variation-<id>"` contract as in the composite. Same inline script handles both pages.
+      - A direct `<a href="<component-id>.html">Open composite →</a>` link.
+    - A footer line: `Generated by visual-refine on <YYYY-MM-DD>. Absolute paths in copy buttons are resolved against <REPO_ROOT> = <absolute-path-of-repo-root>.` This makes the citation strings auditable.
+    - Self-contained: inline `<style>` + inline `<script>` (the same Copy-reference handler used in the composites; ≤ 20 lines, no external deps). Uses `system-ui, -apple-system, sans-serif`.
+
+    The index is deterministic: same inputs → same bytes. No timestamps in machine-readable form (the `<YYYY-MM-DD>` line is the only date and matches the run's date stamp). The index is the recommended entry point the user opens after a run; the composites are reachable from the index, and per-variation standalone files are reachable from each composite.
 
 ### 1.5.E — Consolidation
 
@@ -212,6 +233,7 @@ This phase generates the implementation target before any code changes. It produ
 
     Aspirational spec: <absolute-path-to-aspirational-spec-md>
     Mockup directory: <absolute-path-to-docs/qa/aspirational/<scope-slug>/>
+    Mockup index: <absolute-path-to-docs/qa/aspirational/<scope-slug>/index.html>  # open this first to browse all components
     Iter baseline report: <absolute-path-to-iter-N-report>
 
     Components to address (priority order, highest-delta first):
@@ -327,17 +349,20 @@ This phase generates the implementation target before any code changes. It produ
 
     Each row's `iter-final aspiration_match` is taken from the last visual-qa report whose `--aspirational-spec` was set (post-refactor if Phase 5 ran cleanly; otherwise the last iter-N+1 from Phase 3). The `notes` column is the auditor's verbatim notes for that component in that report.
 
-- [ ] 23. Append the **Variation alternates per component** sub-section. For every component that shipped with a non-trivial number of variations (i.e. `N >= 2`), list the selected variation in bold and the alternates available for post-hoc inspection. Component links point at the composite anchor so the reader lands on the right panel inside the side-by-side view:
+- [ ] 23. Append the **Variation alternates per component** sub-section. The first line of the sub-section MUST be a link to the per-run mockup index: `Index: [aspirational/<scope>/index.html](aspirational/<scope>/index.html)` so the reader has a single click to the gallery entry point. For every component that shipped with a non-trivial number of variations (i.e. `N >= 2`), list the selected variation in bold and the alternates available for post-hoc inspection. Component links point at the composite anchor so the reader lands on the right panel inside the side-by-side view:
 
     ```markdown
     ## Variation alternates per component
+
+    Index: [aspirational/<scope>/index.html](aspirational/<scope>/index.html)
 
     For each component the run shipped with `N >= 2` variations, the row links
     to the composite mockup (all variations rendered side-by-side via
     iframes); the Selected column is the auto-chosen winner; the Alternates
     column lists the other archetypes available in the same composite. To
-    request a swap, open the composite, decide which alternate you prefer,
-    and either re-run visual-refine with a different `--variations` seed or
+    request a swap, open the composite (or click a Copy-reference button to
+    paste the citation into chat), decide which alternate you prefer, and
+    either re-run visual-refine with a different `--variations` seed or
     hand-edit the `selected_variation` field in
     `docs/qa/<scope>-aspirational-spec.md` before re-running visual-refine.
 
