@@ -199,6 +199,16 @@ for f in "$QA_SKILL" "$REFINE_SKILL"; do
         || fail "$f missing the autonomy HARD-GATE clause"
 done
 
+# 13. visual-refine/SKILL.md documents BOTH the composite per-component path
+#     (<component-id>.html) and the per-variation path (<variation-id>.html).
+#     Locks in the side-by-side composite mockup contract.
+if [ -f "$REFINE_SKILL" ]; then
+    grep -q '<component-id>\.html' "$REFINE_SKILL" 2>/dev/null \
+        || fail "visual-refine/SKILL.md missing composite mockup path '<component-id>.html'"
+    grep -q '<variation-id>\.html' "$REFINE_SKILL" 2>/dev/null \
+        || fail "visual-refine/SKILL.md missing per-variation mockup path '<variation-id>.html'"
+fi
+
 if [ "$failures" -eq 0 ]; then
     echo "Result: OK"
     exit 0
