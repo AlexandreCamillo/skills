@@ -192,6 +192,13 @@ check_orphans() {
 check_orphans "$QA_REF_DIR" "$QA_SKILL" "visual-qa"
 check_orphans "$REFINE_REF_DIR" "$REFINE_SKILL" "visual-refine"
 
+# 12. Both SKILL.md files contain the autonomy HARD-GATE clause.
+for f in "$QA_SKILL" "$REFINE_SKILL"; do
+    [ -f "$f" ] || continue
+    grep -q "MUST NOT pause for user confirmation" "$f" 2>/dev/null \
+        || fail "$f missing the autonomy HARD-GATE clause"
+done
+
 if [ "$failures" -eq 0 ]; then
     echo "Result: OK"
     exit 0
