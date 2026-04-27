@@ -22,7 +22,8 @@ This skill MUST NOT:
 - Invoke `brainstorm-and-execute` with `--spec` or `--plan` flags. `visual-refine` always passes a free-text idea so that the autonomous brainstorm phase runs and produces the spec from the visual-qa issue list. The whole point of this composition is to delegate spec generation, not just plan/execute.
 - Skip Phase 1.5 (Aspirational Redesign). Phase 2 is never invoked before the aspirational-spec exists at the documented path under `docs/qa/<date>-visual-refine-<scope>-aspirational-spec.md`. Phase 1.5 is the source of the implementation target; without it, Phase 2's prompt has no aspirational anchor and the run reduces to the obsolete principle-only behavior.
 - Exit Phase 3 on a single gate. The Phase 3 exit criterion is the triple gate `(critical == 0 AND major == 0) AND (every aspiration_match == "yes") AND (no transition with expected_animated == yes appears in inventory_coverage.instant_transitions)`. All three conjuncts MUST hold to exit cleanly; failing any one returns to Phase 2 (subject to STALL and ITER CAP).
-- Exceed the recapture cap of 1 in Phase 1.5.B or the per-component mockup regeneration cap of 3 in Phase 1.5.C. After exceeding either cap the skill MUST take the documented abort path (`aborted-frame-coverage` or `aspirational_quality: degraded` respectively); silent retries are forbidden. The Phase 1.5.E exit gate MUST fire `aborted-aspirational-quality` when `components_degraded` exceeds 20% of `components_total`.
+- Exceed the recapture cap of 1 in Phase 1.5.B. Phase 1.5.C dispatches `N` (= `--variations`, default 3, range 1..5) parallel variations per component WITHOUT regeneration: a variation that fails its auto-honesty check is marked `aspirational_quality: degraded` and shipped as-is; sibling variations continue independently. After exceeding the recapture cap the skill MUST take the `aborted-frame-coverage` abort path; silent retries are forbidden. The Phase 1.5.F exit gate MUST fire `aborted-aspirational-quality` when `components_degraded` exceeds 20% of `components_total`, where a component is `degraded` only when ALL its variations are `degraded`.
+- The skill MUST NOT pause for user confirmation, approval, review, or any other interactive input at any phase. Every decision is made autonomously per the documented protocol. Cost or duration warnings are informational only and do not block execution. The only legitimate halts are the documented abort outcomes (aborted-frame-coverage, aborted-aspirational-quality, aborted-gate-failure, budget-exhausted, etc.) which terminate the run cleanly without prompting the user.
 </HARD-GATE>
 
 # Visual Refine
@@ -34,12 +35,13 @@ Transform the scoped UI surface from its current state to one that scores at lea
 - Free-text scope argument (conceptually required; if omitted, scope is "full app"). Examples: `visual-refine`, `visual-refine tela de login`, `visual-refine fluxo de registro`.
 - Optional flag `--report <path>`: when provided and the file exists, `visual-refine` uses it as the initial baseline for Phase 1 instead of running `visual-qa` fresh.
 - Optional flag `--iter-budget <minutes>` (default `60`): forwarded to each per-iteration `brainstorm-and-execute` invocation as its `--budget`. The default rose from 30 to 60 minutes because Phase 1.5 adds parallel mockup generation with self-honesty regeneration loops (estimated 15–25 min per iteration depending on component count). Worst-case wall-clock ceiling for a full `visual-refine` run is therefore `MAX_ITER × 60 + 25 ≈ 325 min` (the `+ 25` accounts for the Phase 1.5 generation cost and the final visual-qa runs in Phases 1, 3, and 5).
+- Optional flag `--variations <N>` (default `3`, range `1..5`): number of distinct design variations to generate per component in Phase 1.5.C. Each variation is a separate parallel subagent dispatch with a pre-assigned design archetype (A/B/C/D/E). `N=1` disables exploration and is equivalent to the prior single-mockup behavior. `N=5` is the upper cap (cost vs. choice tradeoff). Values outside the `1..5` range abort immediately with status `aborted-invalid-input`.
 
 ## Outputs
 
 - A consolidated report at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md`.
 - A Phase 1.5 aspirational-spec at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>-aspirational-spec.md` with one section per inventoried component.
-- Per-component standalone HTML mockups under `docs/qa/aspirational/<scope-slug>/<component-id>.html`, each openable in Chrome and self-contained.
+- Per-component standalone HTML mockups under `docs/qa/aspirational/<scope-slug>/<component-id>/<variation-id>.html` (nested per-component directory; one HTML file per variation a-e). Each is openable in Chrome and self-contained.
 - All intermediate `visual-qa` iter reports kept in `docs/qa/`.
 - Per-iteration `brainstorm-and-execute` artifacts: one rubric (`docs/superpowers/decisions/<bae-slug>/rubric.md`), one set of decision files (`docs/superpowers/decisions/<bae-slug>/NN-*.md`), one autonomously-generated spec (`docs/superpowers/specs/<bae-slug>-design.md`), one plan (`docs/superpowers/plans/<bae-slug>-plan.md`), and one run report (`docs/superpowers/runs/<bae-slug>-run.md`).
 - Working tree with modifications applied, HEAD identical to `INITIAL_SHA`, no commits, no staged files beyond what was already staged at Phase 0.
@@ -84,25 +86,66 @@ This phase generates the implementation target before any code changes. It produ
 
 - [ ] 7. Invoke `visual-qa --recapture-only <gap-list>` via the `Skill` tool. This is a NEW visual-qa internal mode that skips inventory enumeration and records ONLY the listed gaps, writing a supplemental report. Merge the supplemental coverage into the iter-N coverage view in memory. **Cap: 1 recapture per visual-refine run.** If after the merge any gap remains in `missing_states`, `missing_transitions`, or `low_quality_frames`, abort to Phase 6 with status `aborted-frame-coverage` and skip Phases 2–5; the final report enumerates the unresolved gaps and tells the user what to inspect.
 
-### 1.5.C — Per-component aspirational generation (parallel, self-honesty cap 3)
+### 1.5.C — Per-component parallel variations (N parallel subagents per component, NO regeneration)
 
-- [ ] 8. Dispatch one parallel subagent per component listed in `inventory.components` via `superpowers:dispatching-parallel-agents`. Each subagent receives:
+- [ ] 8. For each component in `inventory.components`, dispatch `N` (default `3`, configurable via `--variations`, range `1..5`) parallel subagents via `superpowers:dispatching-parallel-agents`. The total parallel dispatch is `components × N` (e.g., 23 components at `N=3` → 69 parallel subagents in concurrency-capped batches). Each subagent receives:
     - The component's frame screenshots and DOM snapshots (paths) from the iter-N report.
     - The component's inventory entry (`{id, states, transitions}`).
     - `references/design-principles.md` (the rubric and the Part 3 anti-pattern blacklist).
     - The component-id slug and the `<scope-slug>` for output paths.
+    - A unique **variation archetype** (A/B/C/D/E) assigned round-robin from the archetype list below. Each subagent's prompt explicitly forbids calling `AskUserQuestion`, `request_human_review`, or any other tool that pauses for user input — defense-in-depth for the autonomy HARD-GATE clause.
 
-    Each subagent MUST execute these five steps and emit them as its return payload:
+    The variation archetypes — exactly one is assigned to each subagent — are:
+
+    - **Variation A — Minimal / Editorial.** References: Linear, Vercel, Stripe-Docs. Hallmarks: restrained palette, prominent type, generous whitespace, monoline icons, content-first hierarchy, motion limited to ease-out fades.
+    - **Variation B — Expressive / Branded.** References: Stripe Dashboard, Conductor, Apple HIG, Notion. Hallmarks: bolder accent usage, gradient surfaces where they earn attention, signature micro-interactions, decorative-but-functional ornament, multi-stop motion curves.
+    - **Variation C — Dense / Tooly.** References: Raycast, Arc, Linear Cmd, Sublime. Hallmarks: information-dense layout, command-bar aesthetic, hover-reveal affordances, tabular numerics, keyboard-first cues, snap motion (no overshoot).
+    - **Variation D — Playful / Memorable** (used only when `N >= 4`). References: Loom, Replit, Vercel-marketing. Hallmarks: distinctive shapes, hand-drawn flourishes where appropriate, loose grids, surprising-but-coherent details.
+    - **Variation E — Calm / Spatial** (used only when `N == 5`). References: Apple HIG, Things, IA Writer. Hallmarks: layered surfaces, large optical-rest areas, soft shadows that imply elevation, minimal chrome, breathing motion.
+
+    Archetype assignment per `N`:
+    - `N=1` → {A}
+    - `N=2` → {A, B}
+    - `N=3` → {A, B, C}
+    - `N=4` → {A, B, C, D}
+    - `N=5` → {A, B, C, D, E}
+
+    Each subagent MUST execute these six steps and emit them as its return payload:
 
     1. **Current-state description.** One short line per applicable rubric dimension summarizing how the captured frames score against the rubric.
-    2. **Aspirational description.** What the component should look like at 3/3 across applicable dimensions, with **at least 2 named real-world references** drawn from `Linear`, `Stripe`, `Apple HIG`, `Vercel`, `Conductor`, `Arc`, `Raycast`, plus a one-line reason each is cited (e.g., "Linear: dense workspace chrome with deliberate negative space"; "Raycast: keyboard-first command palette with hairline divider hierarchy").
-    3. **Standalone HTML mockup.** Write to `docs/qa/aspirational/<scope-slug>/<component-id>.html`. Self-contained: CSS in `<style>`, no external runtime, no network fetches, viewport sized to the component's natural canvas. Render multiple states side-by-side when relevant (e.g., default + hover + active for a button; expanded + collapsed for a sidebar).
-    4. **Self-honesty pass.** Open the just-written mockup via Chrome MCP `new_page`/`navigate_page`, screenshot via `take_screenshot`, then score the screenshot against the rubric and the Part 3 anti-pattern blacklist. If any anti-pattern is violated (banned font as display: Inter, Roboto, Arial, bare system-ui; `transition: all 0.3s ease`; purple-on-white gradient; default Tailwind shadow on its own; generic empty-state phrasing; AAA-contrast violation on a primary CTA), regenerate the mockup. **Cap: 3 regenerations per component.** After 3 failed attempts, mark `aspirational_quality: degraded` for that component, ship the latest attempt as-is, and continue. Degraded components surface in the Phase 6 final report.
-    5. **Concrete deltas list.** 5–10 specific code-level changes the implementation must make to move from the captured current state to the aspirational mockup (e.g., "Replace topbar `border-bottom: 1px solid var(--border)` with conditional border that disappears on home", "Reduce sidebar dashboard label from 18px to 13px and align baseline with sibling rows", "Add hairline divider between density-card rows").
+    2. **Aspirational description IN THE ASSIGNED ARCHETYPE — not free-form.** What the component should look like at 3/3 across applicable dimensions while honoring the archetype's named references, palette discipline, motion vocabulary, and density choices. Cite at least 2 of the archetype's named references with a one-line reason each (e.g., for Variation C: "Raycast: keyboard-first command palette with hairline divider hierarchy"; "Linear Cmd: tabular numerics with monospaced fallbacks"). Two subagents working on the same component MUST produce *visibly different* mockups by virtue of their archetypes; do not collapse to a generic look.
+    3. **Standalone HTML mockup.** Write to `docs/qa/aspirational/<scope-slug>/<component-id>/<variation-id>.html` (lowercase variation id: `a`, `b`, `c`, `d`, or `e`). Note the per-component nested directory. Self-contained: CSS in `<style>`, no external runtime, no network fetches, viewport sized to the component's natural canvas. Render multiple states side-by-side when relevant (e.g., default + hover + active for a button; expanded + collapsed for a sidebar).
+    4. **Auto-honesty pass.** Open the just-written mockup via Chrome MCP `new_page`/`navigate_page`, screenshot via `take_screenshot`, then score the screenshot against the rubric and the Part 3 anti-pattern blacklist. Record:
+       - `rubric_self_score`: integer sum across applicable rubric dimensions for this variation.
+       - `aspirational_quality`: `ok` if no Part 3 anti-pattern is violated (banned display fonts: Inter, Roboto, Arial, bare system-ui; `transition: all 0.3s ease`; purple-on-white gradient; default Tailwind shadow on its own; generic empty-state phrasing; AAA-contrast violation on a primary CTA); `degraded` otherwise.
+       - `quality_notes`: when `degraded`, the verbatim list of anti-patterns violated (one line each); when `ok`, may be empty or contain incidental observations.
+    5. **NO regeneration.** A failing variation is marked `degraded` and that variation is done. The cap-3 regeneration loop from the prior design is gone — exploration over pursuit. Other variations for the same component continue independently.
+    6. **Concrete deltas list.** 5–10 specific code-level changes the implementation must make to move from the captured current state to *this* variation's aspirational mockup (e.g., "Replace topbar `border-bottom: 1px solid var(--border)` with conditional border that disappears on home", "Reduce sidebar dashboard label from 18px to 13px and align baseline with sibling rows", "Add hairline divider between density-card rows").
 
-### 1.5.D — Consolidation
+### 1.5.D — Variation selection (per component)
 
-- [ ] 9. Concatenate every subagent's output into `docs/qa/<date>-visual-refine-<scope-slug>-aspirational-spec.md`. The file MUST start with this frontmatter:
+- [ ] 9. After all `N` variations for a component complete, the wrapper picks the **selected** variation per the following deterministic algorithm. No user input; this is fully automatic.
+
+    ```
+    1. Filter the component's variations to those with aspirational_quality == ok.
+    2. If zero non-degraded variations remain → the component is degraded
+       (this counts toward components_degraded for the Phase 1.5.F gate).
+       Record selected_variation: null and alternates: [].
+    3. Otherwise, among non-degraded variations, pick the one with the
+       highest rubric_self_score.
+    4. Tiebreaker A (equal rubric_self_score): smallest HTML byte size
+       (simplicity proxy — `wc -c` on the mockup HTML file).
+    5. Tiebreaker B (still tied): lexicographic variation id ascending
+       (a < b < c < d < e).
+    6. Record selected_variation: <id> and alternates: [<non-selected
+       non-degraded ids>] in the component's spec section.
+    ```
+
+    The aspirational-spec markdown's per-component section now lists ALL variations (selected + alternates), each with: archetype name, mockup path, `rubric_self_score`, `aspirational_quality`, `quality_notes`, and the deltas list. The selected variation's deltas list is the implementation hint for Phase 2; alternates are documented for the user's later inspection and post-hoc swap.
+
+### 1.5.E — Consolidation
+
+- [ ] 10. Concatenate every subagent's output (grouped by component, with the selected variation surfaced first) into `docs/qa/<date>-visual-refine-<scope-slug>-aspirational-spec.md`. The file MUST start with this frontmatter:
 
     ```yaml
     ---
@@ -113,30 +156,37 @@ This phase generates the implementation target before any code changes. It produ
     iter_baseline: <absolute-path-to-iter-N-report>
     inventory_source: <iter-N-frontmatter-snippet>
     mockup_dir: docs/qa/aspirational/<scope-slug>/
+    variations_per_component: <N>
     components_total: <int>
     components_with_mockup: <int>
     components_degraded: <int>
     ---
     ```
 
-    Below the frontmatter, one section per component, in the order they appear in `inventory.components`. Each section header is `## <component-id>` and contains the four prose blocks (current-state, aspirational, mockup link, concrete deltas) plus a `aspirational_quality:` line marked `ok` or `degraded`.
+    Below the frontmatter, one section per component, in the order they appear in `inventory.components`. Each section header is `## <component-id>` and contains:
 
-### 1.5.E — Phase 1.5 exit gate
+    - A `selected_variation: <id-or-null>` line.
+    - An `alternates: [<id>, ...]` line.
+    - A `aspirational_quality:` line marked `ok` (at least one variation is ok) or `degraded` (all variations are degraded).
+    - One sub-block per variation (selected first, then alternates by lexicographic id) containing: archetype name, mockup path, `rubric_self_score`, `aspirational_quality`, `quality_notes`, current-state description, aspirational description, and concrete deltas list.
 
-- [ ] 10. Evaluate the gate. Pass requires:
+### 1.5.F — Phase 1.5 exit gate
+
+- [ ] 11. Evaluate the gate. Pass requires:
     - `inventory_coverage.complete: true` (after 1.5.B recapture if any).
-    - `components_degraded < 0.2 * components_total` (strict less-than). At exactly 20% the gate fires the abort path; the `< 20%` rule is intentional, not a rounding convention.
-    - `docs/qa/<date>-visual-refine-<scope-slug>-aspirational-spec.md` exists with one section per component in `inventory.components`.
+    - `components_degraded < 0.2 * components_total` (strict less-than). At exactly 20% the gate fires the abort path; the `< 20%` rule is intentional, not a rounding convention. **A component is `degraded` only when ALL of its `N` variations are `degraded`** — the aggregate is computed from variation-level outcomes per Phase 1.5.D step 2. A component with even one non-degraded variation is fine.
+    - `docs/qa/<date>-visual-refine-<scope-slug>-aspirational-spec.md` exists with one section per component in `inventory.components`, each section listing all `N` variations.
 
     Failure modes:
     - `aborted-frame-coverage`: gaps remain after the 1 allowed recapture in 1.5.B.
-    - `aborted-aspirational-quality`: too many components degraded in 1.5.C.
+    - `aborted-aspirational-quality`: too many components degraded in 1.5.C (component-level aggregate per the rule above).
+    - `aborted-invalid-input`: `--variations <N>` was outside the `1..5` range; the run halts before any Phase 1.5 work begins.
 
-    Both abort paths skip Phases 2–5 entirely and jump to Phase 6 with the corresponding status; the final report lists what failed and what the user should inspect (e.g., the inventory entry that produced an unreachable component, the recurring blacklist violation in degraded mockups). On pass, proceed to Phase 2.
+    Both abort paths skip Phases 2–5 entirely and jump to Phase 6 with the corresponding status; the final report lists what failed and what the user should inspect (e.g., the inventory entry that produced an unreachable component, the recurring blacklist violation in fully-degraded components). On pass, proceed to Phase 2.
 
 ## Phase 2 — Iteration N: autonomous spec + execute
 
-- [ ] 11. Build the prompt for `brainstorm-and-execute`. The prompt is a free-text idea (NOT a `--spec` path) that gives `brainstorm-and-execute` enough context to autonomously brainstorm, score decisions, and write its own spec — but now anchored on the aspirational-spec rather than the principle-only issue list. Construct it as:
+- [ ] 12. Build the prompt for `brainstorm-and-execute`. The prompt is a free-text idea (NOT a `--spec` path) that gives `brainstorm-and-execute` enough context to autonomously brainstorm, score decisions, and write its own spec — but now anchored on the aspirational-spec rather than the principle-only issue list. Construct it as:
 
     ```
     Implement the aspirational redesign for scope "<scope-slug>",
@@ -153,12 +203,17 @@ This phase generates the implementation target before any code changes. It produ
       ... (top N by rubric delta from iter-N; full list in the spec)
 
     For each component:
-    - The mockup HTML at docs/qa/aspirational/<scope-slug>/<component>.html
+    - The selected variation's mockup HTML at
+      docs/qa/aspirational/<scope-slug>/<component>/<selected-variation-id>.html
       is the visual target. Open it in Chrome to inspect its rendering.
-    - Do not deviate from the mockup intent without justification recorded
-      as a decision file under docs/superpowers/decisions/<bae-slug>/.
-    - The "Concrete deltas" list in each spec section is the implementation
-      hint.
+      Alternate variations live alongside it in the same per-component
+      directory but are NOT the implementation target — they are kept for
+      post-hoc swap by the user.
+    - Do not deviate from the selected variation's mockup intent without
+      justification recorded as a decision file under
+      docs/superpowers/decisions/<bae-slug>/.
+    - The "Concrete deltas" list under the selected variation in each spec
+      section is the implementation hint.
     - Honor the 9-dimension rubric in
       ~/.claude/skills/visual-refine/references/design-principles.md.
 
@@ -173,7 +228,7 @@ This phase generates the implementation target before any code changes. It produ
 
     Save this prompt verbatim into the eventual final report so the user can audit what brainstorm-and-execute was asked to do.
 
-- [ ] 12. Invoke `brainstorm-and-execute` via the `Skill` tool (or `/brainstorm-and-execute` slash command) with the prompt from step 11 plus these flags:
+- [ ] 13. Invoke `brainstorm-and-execute` via the `Skill` tool (or `/brainstorm-and-execute` slash command) with the prompt from step 12 plus these flags:
        - `--no-simplify` (HARD-GATE requirement; final refactor runs in Phase 4)
        - `--budget <iter-budget>` (default 60 minutes per iteration; configurable via `--iter-budget`)
        - Do NOT pass `--spec` or `--plan`. The autonomous brainstorm phase MUST run so that `brainstorm-and-execute` produces the iter spec from the aspirational-spec + visual-qa issue list itself, runs its own spec-review (3 cycles) and plan-review (2 cycles), and dispatches parallel-wave execution.
@@ -181,8 +236,8 @@ This phase generates the implementation target before any code changes. It produ
 
 ## Phase 3 — QA loop
 
-- [ ] 13. Invoke `visual-qa <scope> --aspirational-spec <absolute-path-to-aspirational-spec-md>` via the `Skill` tool. The report is written with suffix `-iter<N+1>`. Passing `--aspirational-spec` causes visual-qa to populate the `aspiration_match` frontmatter array (one entry per component in the aspirational-spec) in addition to its standard frontmatter.
-- [ ] 14. Compare iter `N` vs iter `N+1` against the **triple-gate exit** and evaluate branches in this exact order (this replaces the historical single-gate exit; see `references/loop-mechanics.md` §"Phase 3 loop exit precedence" for the canonical version):
+- [ ] 14. Invoke `visual-qa <scope> --aspirational-spec <absolute-path-to-aspirational-spec-md>` via the `Skill` tool. The report is written with suffix `-iter<N+1>`. Passing `--aspirational-spec` causes visual-qa to populate the `aspiration_match` frontmatter array (one entry per component in the aspirational-spec) in addition to its standard frontmatter.
+- [ ] 15. Compare iter `N` vs iter `N+1` against the **triple-gate exit** and evaluate branches in this exact order (this replaces the historical single-gate exit; see `references/loop-mechanics.md` §"Phase 3 loop exit precedence" for the canonical version):
 
     ```
     1. CLEAN EXIT — all four conditions must hold:
@@ -215,14 +270,14 @@ This phase generates the implementation target before any code changes. It produ
 
 ## Phase 4 — Final refactor
 
-- [ ] 15. Invoke `requesting-code-review` skill against the full uncommitted diff versus `INITIAL_SHA`. The diff under review now includes the aspirational-spec markdown and the per-component mockup HTML files; both are in scope of the review for completeness even though they are documentation artifacts.
-- [ ] 16. Address review feedback inline (no new spec). These are technical refinements, not design changes.
-- [ ] 17. Invoke the `simplify` skill on the uncommitted diff. Apply simplifications in place. This is the only simplify pass in the run — `brainstorm-and-execute` was invoked with `--no-simplify` per iteration precisely so the final simplify can operate on the entire cross-iteration diff in one pass. Then checkpoint: `git reset --soft $INITIAL_SHA` if HEAD changed. Log if so.
+- [ ] 16. Invoke `requesting-code-review` skill against the full uncommitted diff versus `INITIAL_SHA`. The diff under review now includes the aspirational-spec markdown and the per-component mockup HTML files; both are in scope of the review for completeness even though they are documentation artifacts.
+- [ ] 17. Address review feedback inline (no new spec). These are technical refinements, not design changes.
+- [ ] 18. Invoke the `simplify` skill on the uncommitted diff. Apply simplifications in place. This is the only simplify pass in the run — `brainstorm-and-execute` was invoked with `--no-simplify` per iteration precisely so the final simplify can operate on the entire cross-iteration diff in one pass. Then checkpoint: `git reset --soft $INITIAL_SHA` if HEAD changed. Log if so.
 
 ## Phase 5 — Anti-regression verification
 
-- [ ] 18. Invoke `visual-qa <scope> --aspirational-spec <absolute-path-to-aspirational-spec-md>` one final time; report suffix `-post-refactor`. Passing `--aspirational-spec` ensures the post-refactor report carries `aspiration_match` so the regression check below can detect aspiration regression as well as principle regression.
-- [ ] 19. Diff against the last green iter report from Phase 3:
+- [ ] 19. Invoke `visual-qa <scope> --aspirational-spec <absolute-path-to-aspirational-spec-md>` one final time; report suffix `-post-refactor`. Passing `--aspirational-spec` ensures the post-refactor report carries `aspiration_match` so the regression check below can detect aspiration regression as well as principle regression.
+- [ ] 20. Diff against the last green iter report from Phase 3:
   - **Principle regression**: any new issue id (by `(dimension, tag, title)` identity) that did not exist in the green iter report.
   - **Aspiration regression**: any component whose `aspiration_match` flipped from `yes` in the last green iter report to `no` in the post-refactor report. (Identity is keyed on `component_id`; see `references/loop-mechanics.md` §"Issue identity matching across reports".)
   - If neither principle regression nor aspiration regression is detected → done, go to Phase 6.
@@ -235,8 +290,8 @@ This phase generates the implementation target before any code changes. It produ
 
 ## Phase 6 — Final report
 
-- [ ] 20. Write `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md` listing: all iter reports, every per-iteration `brainstorm-and-execute` run-report path and its `outcome`, issues resolved, issues remaining (if caps hit), commits undone (if any), regressions detected (if any), stashes preserved (if any). Include the verbatim Phase 2 prompt(s) so the user can audit what was asked.
-- [ ] 21. Append the **Aspirational fidelity outcomes** section, one row per component:
+- [ ] 21. Write `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md` listing: all iter reports, every per-iteration `brainstorm-and-execute` run-report path and its `outcome`, issues resolved, issues remaining (if caps hit), commits undone (if any), regressions detected (if any), stashes preserved (if any). Include the verbatim Phase 2 prompt(s) so the user can audit what was asked.
+- [ ] 22. Append the **Aspirational fidelity outcomes** section, one row per component:
 
     ```markdown
     ## Aspirational fidelity outcomes
@@ -250,20 +305,42 @@ This phase generates the implementation target before any code changes. It produ
 
     Each row's `iter-final aspiration_match` is taken from the last visual-qa report whose `--aspirational-spec` was set (post-refactor if Phase 5 ran cleanly; otherwise the last iter-N+1 from Phase 3). The `notes` column is the auditor's verbatim notes for that component in that report.
 
-- [ ] 22. Append the **Components with degraded aspirational mockups (from Phase 1.5)** section:
+- [ ] 23. Append the **Variation alternates per component** sub-section. For every component that shipped with a non-trivial number of variations (i.e. `N >= 2`), list the selected variation in bold and the alternates available for post-hoc inspection:
+
+    ```markdown
+    ## Variation alternates per component
+
+    For each component the run shipped with a non-trivial number of variations,
+    this lists the selected variation in bold and the alternates available for
+    post-hoc inspection. To request a swap, open the alternate's HTML in your
+    browser and either re-run visual-refine with a different --variations
+    seed or hand-edit the components-mapping in
+    docs/qa/<scope>-aspirational-spec.md before re-running visual-refine.
+
+    | Component | Selected | Alternates available |
+    |-----------|----------|----------------------|
+    | topbar | **A (Minimal)** | B (Expressive), C (Dense) |
+    | sidebar-row | **C (Dense)** | A (Minimal), B (Expressive) |
+    | settings-appearance | **B (Expressive)** | A (Minimal), C (Dense) |
+    ```
+
+    Each row's `Selected` and `Alternates available` cells are populated from the per-component `selected_variation` and `alternates` fields in the Phase 1.5.E aspirational-spec. The archetype name in parentheses is the human-readable label from Phase 1.5.C (Minimal, Expressive, Dense, Playful, Calm). When the run used `N=1`, omit this sub-section entirely (there are no alternates to surface).
+
+- [ ] 24. Append the **Components with degraded aspirational mockups (from Phase 1.5)** section:
 
     ```markdown
     ## Components with degraded aspirational mockups (from Phase 1.5)
 
-    (Empty when zero, OR list of components where the mockup hit the cap of
-    3 regenerations and shipped degraded — these are seeds for human
-    review.)
+    (Empty when zero, OR list of components where ALL N variations were
+    marked degraded by the auto-honesty pass — these are seeds for human
+    review. A component with at least one non-degraded variation is NOT
+    listed here.)
     ```
 
-    Source: the `aspirational_quality: degraded` lines in the consolidated aspirational-spec from Phase 1.5.D. When zero components are degraded, write the literal "(none)" rather than omitting the section, so the absence is visible.
+    Source: the per-component `aspirational_quality: degraded` lines in the consolidated aspirational-spec from Phase 1.5.E (component-level aggregate; a component is degraded only when every one of its variations is degraded). When zero components are degraded, write the literal "(none)" rather than omitting the section, so the absence is visible.
 
-- [ ] 23. Final verify: `git rev-parse HEAD` must equal `INITIAL_SHA`. If not, write critical alert into the report and tell the user what to inspect.
-- [ ] 24. Exit. The user decides when to commit the resulting changes.
+- [ ] 25. Final verify: `git rev-parse HEAD` must equal `INITIAL_SHA`. If not, write critical alert into the report and tell the user what to inspect.
+- [ ] 26. Exit. The user decides when to commit the resulting changes.
 
 ## Flow diagram
 
@@ -278,9 +355,10 @@ digraph visual_refine {
     "Coverage complete?" [shape=diamond];
     "Phase 1.5.B: visual-qa --recapture-only (max 1)" [shape=box];
     "Coverage complete after recapture?" [shape=diamond];
-    "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" [shape=box];
-    "Phase 1.5.D: Consolidate aspirational-spec" [shape=box];
-    "Phase 1.5.E: degraded < 20%?" [shape=diamond];
+    "Phase 1.5.C: N parallel variations per component (no regen)" [shape=box];
+    "Phase 1.5.D: Variation selection (per component)" [shape=box];
+    "Phase 1.5.E: Consolidate aspirational-spec" [shape=box];
+    "Phase 1.5.F: degraded < 20%?" [shape=diamond];
     "Phase 2: Build aspirational prompt for iter N" [shape=box];
     "Phase 2: brainstorm-and-execute (autonomous, --no-simplify)" [shape=box];
     "Phase 2: Wrapper HEAD checkpoint" [shape=box];
@@ -299,14 +377,14 @@ digraph visual_refine {
     "End" [shape=doublecircle];
 
     "Start" -> "Phase 0: Snapshot INITIAL_SHA" -> "Phase 0: Load design-principles" -> "Phase 1: Get baseline report" -> "Phase 1: Parse report (incl. inventory)" -> "Phase 1.5.A: Frame coverage validation" -> "Coverage complete?";
-    "Coverage complete?" -> "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" [label="yes"];
+    "Coverage complete?" -> "Phase 1.5.C: N parallel variations per component (no regen)" [label="yes"];
     "Coverage complete?" -> "Phase 1.5.B: visual-qa --recapture-only (max 1)" [label="no"];
     "Phase 1.5.B: visual-qa --recapture-only (max 1)" -> "Coverage complete after recapture?";
-    "Coverage complete after recapture?" -> "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" [label="yes"];
+    "Coverage complete after recapture?" -> "Phase 1.5.C: N parallel variations per component (no regen)" [label="yes"];
     "Coverage complete after recapture?" -> "Phase 6: Final report (aborted)" [label="no; aborted-frame-coverage"];
-    "Phase 1.5.C: Parallel per-component mockups (cap 3 regens)" -> "Phase 1.5.D: Consolidate aspirational-spec" -> "Phase 1.5.E: degraded < 20%?";
-    "Phase 1.5.E: degraded < 20%?" -> "Phase 2: Build aspirational prompt for iter N" [label="yes"];
-    "Phase 1.5.E: degraded < 20%?" -> "Phase 6: Final report (aborted)" [label="no; aborted-aspirational-quality"];
+    "Phase 1.5.C: N parallel variations per component (no regen)" -> "Phase 1.5.D: Variation selection (per component)" -> "Phase 1.5.E: Consolidate aspirational-spec" -> "Phase 1.5.F: degraded < 20%?";
+    "Phase 1.5.F: degraded < 20%?" -> "Phase 2: Build aspirational prompt for iter N" [label="yes"];
+    "Phase 1.5.F: degraded < 20%?" -> "Phase 6: Final report (aborted)" [label="no; aborted-aspirational-quality"];
     "Phase 2: Build aspirational prompt for iter N" -> "Phase 2: brainstorm-and-execute (autonomous, --no-simplify)" -> "Phase 2: Wrapper HEAD checkpoint" -> "BAE outcome OK?";
     "BAE outcome OK?" -> "Phase 3: visual-qa iter N+1 --aspirational-spec" [label="success | success-without-simplify | no-tasks-needed"];
     "BAE outcome OK?" -> "Phase 4: requesting-code-review" [label="aborted; log iter-aborted-by-bae"];
@@ -330,7 +408,7 @@ digraph visual_refine {
 
 | Phase | Skill invoked | Purpose |
 |---|---|---|
-| `visual-refine` Phase 1.5.C | `superpowers:dispatching-parallel-agents` | Dispatch one subagent per inventoried component to generate aspirational text + standalone HTML mockup with self-honesty regeneration cap of 3 |
+| `visual-refine` Phase 1.5.C | `superpowers:dispatching-parallel-agents` | Dispatch `N` (default 3, range 1..5) parallel subagents per inventoried component to generate one aspirational HTML mockup per assigned design archetype (A/B/C/D/E). No regeneration; failed variations are marked degraded. |
 | `visual-refine` Phase 2 | `brainstorm-and-execute` (autonomous; `--no-simplify --budget`; no `--spec`/`--plan`) | Autonomous brainstorm → spec → spec-review → plan → plan-review → parallel-wave execute → final HEAD checkpoint, all in one call. Spec is generated from the aspirational-spec + visual-qa issue list, not supplied by visual-refine. |
 | `visual-refine` Phase 4 | `requesting-code-review` | Review uncommitted diff (full cross-iteration, including aspirational artifacts) |
 | `visual-refine` Phase 4 | `simplify` | Clean up uncommitted diff (final pass; per-iteration simplify is suppressed via `brainstorm-and-execute --no-simplify`) |
@@ -342,11 +420,12 @@ Both skills reference `verification-before-completion` implicitly through their 
 
 ## On the relationship between the two skills' invariants
 
-`brainstorm-and-execute` enforces its own four hard invariants (HEAD == INITIAL_SHA, gate-between-waves, wall-clock budget, bounded review retries). `visual-refine` adds more on top (no commits across the FULL run, MAX_ITER cap, MAX_RESTARTS cap, Phase 1.5 must run, triple-gate at Phase 3 exit, recapture cap = 1, mockup regeneration cap = 3, degraded threshold = 20%). The two skills' invariants compose cleanly:
+`brainstorm-and-execute` enforces its own four hard invariants (HEAD == INITIAL_SHA, gate-between-waves, wall-clock budget, bounded review retries). `visual-refine` adds more on top (no commits across the FULL run, MAX_ITER cap, MAX_RESTARTS cap, Phase 1.5 must run, triple-gate at Phase 3 exit, recapture cap = 1, no per-variation regeneration in Phase 1.5.C, component-degraded threshold = 20%, full-run autonomy / no user pause-points). The two skills' invariants compose cleanly:
 
-- The per-iteration `brainstorm-and-execute` HEAD invariant guarantees that each iteration starts and ends at the same SHA. `visual-refine`'s wrapper checkpoint at step 12 is therefore expected to be a no-op; if it ever fires, something inside `brainstorm-and-execute` failed its own invariant and that should be logged.
+- The per-iteration `brainstorm-and-execute` HEAD invariant guarantees that each iteration starts and ends at the same SHA. `visual-refine`'s wrapper checkpoint at step 13 is therefore expected to be a no-op; if it ever fires, something inside `brainstorm-and-execute` failed its own invariant and that should be logged.
 - The per-iteration budget (`--budget`) caps the wall-clock cost of one iteration. `MAX_ITER` caps the number of iterations. The product (plus Phase 1.5 generation cost, ~25 min) is the worst-case total budget — `MAX_ITER × 60 + 25 ≈ 325 min` at the new defaults.
 - `brainstorm-and-execute`'s internal review retries (3 spec, 2 plan) operate WITHIN one iteration. `MAX_RESTARTS` caps how many times the entire `visual-refine` run restarts after an anti-regression failure. Different scopes; no conflict.
-- The recapture cap (1) and mockup regeneration cap (3) are local to Phase 1.5 and never multiply into the per-iteration budget. Their purpose is to bound the auto-honesty loop so the skill cannot silently degrade by re-trying generic outputs indefinitely.
+- The recapture cap (1) is local to Phase 1.5.B and never multiplies into the per-iteration budget. Per-variation regeneration is forbidden in Phase 1.5.C (the cap-3 regeneration loop from the prior design has been replaced by N parallel variations); a failing variation is just marked degraded and exploration continues.
+- The autonomy invariant (HARD-GATE) forbids any pause for user confirmation, approval, or review across the full run. Subagent prompts dispatched in Phase 1.5.C explicitly forbid `AskUserQuestion` and equivalent tools; cost or duration warnings are logged but do not block execution.
 
 The HARD-GATE forbids invoking `brainstorm-and-execute` with `--spec` or `--plan` (which would skip the autonomous brainstorm phase that produces the iter spec from the aspirational-spec + visual-qa issue list) and without `--no-simplify` (which would simplify per-iteration and contaminate the final cross-iteration simplify pass). It also forbids skipping Phase 1.5 entirely or exiting Phase 3 on a single gate — both load-bearing for the aspirational-fidelity guarantee.
