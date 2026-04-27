@@ -209,8 +209,9 @@ if [ -f "$REFINE_SKILL" ]; then
         || fail "visual-refine/SKILL.md missing per-variation mockup path '<variation-id>.html'"
 fi
 
-# 14. visual-refine/SKILL.md documents the per-run mockup index, the
-#     Copy-reference button mechanism, and the canonical citation anchor.
+# 14. visual-refine/SKILL.md documents the per-run mockup gallery, the
+#     Copy-reference button mechanism, the canonical citation anchor, and
+#     the index→composite "Open in dedicated page" deep-link.
 #     Locks the navigation + citation contract.
 if [ -f "$REFINE_SKILL" ]; then
     grep -q '<scope-slug>/index\.html' "$REFINE_SKILL" 2>/dev/null \
@@ -219,6 +220,8 @@ if [ -f "$REFINE_SKILL" ]; then
         || fail "visual-refine/SKILL.md missing Copy-reference button mechanism"
     grep -q '#variation-<id>' "$REFINE_SKILL" 2>/dev/null \
         || fail "visual-refine/SKILL.md missing canonical citation anchor '#variation-<id>'"
+    grep -q 'Open in dedicated page' "$REFINE_SKILL" 2>/dev/null \
+        || fail "visual-refine/SKILL.md missing 'Open in dedicated page' deep-link from index to composite"
 fi
 
 if [ "$failures" -eq 0 ]; then
