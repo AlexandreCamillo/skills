@@ -41,7 +41,8 @@ Transform the scoped UI surface from its current state to one that scores at lea
 
 - A consolidated report at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>.md`.
 - A Phase 1.5 aspirational-spec at `docs/qa/YYYY-MM-DD-visual-refine-<scope-slug>-aspirational-spec.md` with one section per inventoried component.
-- Per-component standalone HTML mockups under `docs/qa/aspirational/<scope-slug>/<component-id>/<variation-id>.html` (nested per-component directory; one HTML file per variation a-e). Each is openable in Chrome and self-contained.
+- Per-component composite HTML at `docs/qa/aspirational/<scope-slug>/<component-id>.html` rendering ALL N variations side-by-side in a CSS-Grid layout via iframes, with archetype label, `rubric_self_score`, quality badge, and a Selected marker on the auto-chosen winner. The composite is the primary artifact for human inspection and side-by-side comparison.
+- Per-component standalone HTML mockups under `docs/qa/aspirational/<scope-slug>/<component-id>/<variation-id>.html` (nested per-component directory; one HTML file per variation a-e). Each is openable in Chrome, self-contained, and serves as the iframe `src` for the composite. They remain on disk as audit/debug artifacts.
 - All intermediate `visual-qa` iter reports kept in `docs/qa/`.
 - Per-iteration `brainstorm-and-execute` artifacts: one rubric (`docs/superpowers/decisions/<bae-slug>/rubric.md`), one set of decision files (`docs/superpowers/decisions/<bae-slug>/NN-*.md`), one autonomously-generated spec (`docs/superpowers/specs/<bae-slug>-design.md`), one plan (`docs/superpowers/plans/<bae-slug>-plan.md`), and one run report (`docs/superpowers/runs/<bae-slug>-run.md`).
 - Working tree with modifications applied, HEAD identical to `INITIAL_SHA`, no commits, no staged files beyond what was already staged at Phase 0.
@@ -143,6 +144,22 @@ This phase generates the implementation target before any code changes. It produ
 
     The aspirational-spec markdown's per-component section now lists ALL variations (selected + alternates), each with: archetype name, mockup path, `rubric_self_score`, `aspirational_quality`, `quality_notes`, and the deltas list. The selected variation's deltas list is the implementation hint for Phase 2; alternates are documented for the user's later inspection and post-hoc swap.
 
+### 1.5.D.1 — Composite assembly (per component)
+
+- [ ] 9b. After the selection step, assemble a composite HTML at `docs/qa/aspirational/<scope-slug>/<component-id>.html` that renders ALL `N` variations side-by-side via iframes. The composite is the primary artifact for human inspection; per-variation standalone files at `<component-id>/<variation-id>.html` remain on disk and serve as the iframe `src`. The composite has:
+
+    - Self-contained `<style>` block. NO external CSS, NO JS, NO non-system fonts. Use `system-ui, -apple-system, sans-serif`.
+    - CSS Grid layout: `display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 24px; padding: 32px;`. Neutral background (`#fafafa` light or `#0a0a0a` dark — match the variations' theme by sampling the first variation's `<body>` background).
+    - One `<section class="panel">` per variation, in lexicographic id order (`a` first, then `b`, …):
+      - `<header>` containing: archetype name (e.g., "A — Minimal / Editorial"), `<span class="score">` with `rubric_self_score`, `<span class="quality">` rendering `ok` (green dot) or `degraded` (red dot + violation summary).
+      - The selected panel additionally includes `<span class="selected-badge">Selected</span>` and a 2px accent border (`box-shadow: inset 0 0 0 2px <accent>` works without Layout-affecting borders).
+      - `<iframe src="<component-id>/<variation-id>.html" loading="lazy">` sized to the variation's natural canvas (default `width=1200 height=800`; if a variation's `<body>` declares an explicit `min-width`/`min-height`, use those).
+    - Anchors per panel: `id="variation-a"`, `id="variation-b"`, etc., so Phase 6 alternates table can deep-link.
+    - `<title>` element: `"Mockup variations — <component-id>"`.
+    - The composite is deterministic: same inputs → same bytes. No timestamps, no random ids.
+
+    Open the composite in Chrome to verify it renders end-to-end (all iframes load, no `file://` cross-origin block since iframes are same-origin under the parent directory). The composite is referenced from the aspirational-spec markdown (1.5.E) as the primary mockup link per component.
+
 ### 1.5.E — Consolidation
 
 - [ ] 10. Concatenate every subagent's output (grouped by component, with the selected variation surfaced first) into `docs/qa/<date>-visual-refine-<scope-slug>-aspirational-spec.md`. The file MUST start with this frontmatter:
@@ -165,10 +182,11 @@ This phase generates the implementation target before any code changes. It produ
 
     Below the frontmatter, one section per component, in the order they appear in `inventory.components`. Each section header is `## <component-id>` and contains:
 
+    - A `composite_mockup: docs/qa/aspirational/<scope-slug>/<component-id>.html` line — the primary artifact for human inspection (assembled in 1.5.D.1).
     - A `selected_variation: <id-or-null>` line.
     - An `alternates: [<id>, ...]` line.
     - A `aspirational_quality:` line marked `ok` (at least one variation is ok) or `degraded` (all variations are degraded).
-    - One sub-block per variation (selected first, then alternates by lexicographic id) containing: archetype name, mockup path, `rubric_self_score`, `aspirational_quality`, `quality_notes`, current-state description, aspirational description, and concrete deltas list.
+    - One sub-block per variation (selected first, then alternates by lexicographic id) containing: archetype name, **standalone mockup path** (`<component-id>/<variation-id>.html`), `rubric_self_score`, `aspirational_quality`, `quality_notes`, current-state description, aspirational description, and concrete deltas list. Each sub-block also includes a deep-link `composite_anchor: <component-id>.html#variation-<id>` so cross-references resolve to the composite panel.
 
 ### 1.5.F — Phase 1.5 exit gate
 
@@ -203,12 +221,16 @@ This phase generates the implementation target before any code changes. It produ
       ... (top N by rubric delta from iter-N; full list in the spec)
 
     For each component:
-    - The selected variation's mockup HTML at
+    - Open docs/qa/aspirational/<scope-slug>/<component>.html in Chrome:
+      this composite renders ALL variations side-by-side via iframes,
+      labelled by archetype with rubric scores; the panel marked "Selected"
+      is the implementation target. Use the composite to compare archetypes
+      at a glance.
+    - The Selected panel's source is the standalone HTML at
       docs/qa/aspirational/<scope-slug>/<component>/<selected-variation-id>.html
-      is the visual target. Open it in Chrome to inspect its rendering.
-      Alternate variations live alongside it in the same per-component
-      directory but are NOT the implementation target — they are kept for
-      post-hoc swap by the user.
+      (also openable directly). Alternate variations live alongside it in
+      the same per-component directory but are NOT the implementation
+      target — they are kept for post-hoc swap by the user.
     - Do not deviate from the selected variation's mockup intent without
       justification recorded as a decision file under
       docs/superpowers/decisions/<bae-slug>/.
@@ -305,26 +327,32 @@ This phase generates the implementation target before any code changes. It produ
 
     Each row's `iter-final aspiration_match` is taken from the last visual-qa report whose `--aspirational-spec` was set (post-refactor if Phase 5 ran cleanly; otherwise the last iter-N+1 from Phase 3). The `notes` column is the auditor's verbatim notes for that component in that report.
 
-- [ ] 23. Append the **Variation alternates per component** sub-section. For every component that shipped with a non-trivial number of variations (i.e. `N >= 2`), list the selected variation in bold and the alternates available for post-hoc inspection:
+- [ ] 23. Append the **Variation alternates per component** sub-section. For every component that shipped with a non-trivial number of variations (i.e. `N >= 2`), list the selected variation in bold and the alternates available for post-hoc inspection. Component links point at the composite anchor so the reader lands on the right panel inside the side-by-side view:
 
     ```markdown
     ## Variation alternates per component
 
-    For each component the run shipped with a non-trivial number of variations,
-    this lists the selected variation in bold and the alternates available for
-    post-hoc inspection. To request a swap, open the alternate's HTML in your
-    browser and either re-run visual-refine with a different --variations
-    seed or hand-edit the components-mapping in
-    docs/qa/<scope>-aspirational-spec.md before re-running visual-refine.
+    For each component the run shipped with `N >= 2` variations, the row links
+    to the composite mockup (all variations rendered side-by-side via
+    iframes); the Selected column is the auto-chosen winner; the Alternates
+    column lists the other archetypes available in the same composite. To
+    request a swap, open the composite, decide which alternate you prefer,
+    and either re-run visual-refine with a different `--variations` seed or
+    hand-edit the `selected_variation` field in
+    `docs/qa/<scope>-aspirational-spec.md` before re-running visual-refine.
 
-    | Component | Selected | Alternates available |
-    |-----------|----------|----------------------|
-    | topbar | **A (Minimal)** | B (Expressive), C (Dense) |
-    | sidebar-row | **C (Dense)** | A (Minimal), B (Expressive) |
-    | settings-appearance | **B (Expressive)** | A (Minimal), C (Dense) |
+    | Component | Composite | Selected | Alternates |
+    |-----------|-----------|----------|------------|
+    | topbar | [topbar.html](aspirational/<scope>/topbar.html) | **A (Minimal)** [`#variation-a`](aspirational/<scope>/topbar.html#variation-a) | B (Expressive) [`#variation-b`](aspirational/<scope>/topbar.html#variation-b), C (Dense) [`#variation-c`](aspirational/<scope>/topbar.html#variation-c) |
+    | sidebar-row | [sidebar-row.html](aspirational/<scope>/sidebar-row.html) | **C (Dense)** [`#variation-c`](aspirational/<scope>/sidebar-row.html#variation-c) | A (Minimal) [`#variation-a`](aspirational/<scope>/sidebar-row.html#variation-a), B (Expressive) [`#variation-b`](aspirational/<scope>/sidebar-row.html#variation-b) |
+
+    Direct standalone links (footnote, for the user who prefers to open one
+    variation full-window):
+    `aspirational/<scope>/<component>/<variation>.html` — same content as
+    the composite panels' iframe `src`.
     ```
 
-    Each row's `Selected` and `Alternates available` cells are populated from the per-component `selected_variation` and `alternates` fields in the Phase 1.5.E aspirational-spec. The archetype name in parentheses is the human-readable label from Phase 1.5.C (Minimal, Expressive, Dense, Playful, Calm). When the run used `N=1`, omit this sub-section entirely (there are no alternates to surface).
+    Each row's `Selected` and `Alternates` cells are populated from the per-component `selected_variation` and `alternates` fields in the Phase 1.5.E aspirational-spec. The archetype name in parentheses is the human-readable label from Phase 1.5.C (Minimal, Expressive, Dense, Playful, Calm). When the run used `N=1`, omit this sub-section entirely (there are no alternates to surface).
 
 - [ ] 24. Append the **Components with degraded aspirational mockups (from Phase 1.5)** section:
 
