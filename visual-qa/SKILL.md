@@ -20,6 +20,9 @@ This skill MUST NOT:
 - Skip Step 4.5 (Component & State Inventory). The inventory is the recording floor; no run is valid without it.
 - Capture fewer than exactly 5 frames per transition (start, ~25%, ~50%, ~75%, end). A transition may be recorded as `instant` ONLY after the auditor has verified frames `start`, `mid` (frame 3), and `end` are byte-equal — never as a shortcut.
 - Write the final report if `inventory_coverage.complete == false` without enumerating every gap in `missing_states`, `missing_transitions`, `instant_transitions`, or `low_quality_frames`.
+- The skill MUST NOT pause for user confirmation, approval, review, or any
+  other interactive input. Cost or duration warnings are informational only
+  and do not block execution.
 </HARD-GATE>
 
 # Visual QA
