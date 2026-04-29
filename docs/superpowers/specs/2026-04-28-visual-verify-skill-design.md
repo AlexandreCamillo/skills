@@ -238,9 +238,14 @@ This skill MUST NOT:
     a. git stash push --include-untracked --message
        "visual-verify-baseline-${TS}".
     b. If stash is a no-op (clean tree + change is committed), enter
-       fallback: create temp worktree at HEAD~N where N is the count
-       of commits to undo to reach pre-change state. Set
-       `baseline_method: fallback` in the report. Confidence cap = medium.
+       fallback: create temp worktree at HEAD~1 (the commit IMMEDIATELY
+       before HEAD — the canonical "pre-change" state for a single-
+       commit fix). The fallback does NOT walk further back; if HEAD~1
+       is not the right baseline (multi-commit feature already pushed
+       and squashed), the agent must abort and instruct the user to
+       supply the baseline ref explicitly via a future flag (out of
+       scope for v1). Set `baseline_method: fallback` in the report.
+       Confidence cap = medium.
     c. CDP Page.reload({ ignoreCache: true }) on the running app.
        Wait for Page.loadEventFired + 2× requestAnimationFrame settle.
     d. Run the matrix (3×3×3 default, 5×5×5 with --full). For each
@@ -276,6 +281,11 @@ This skill MUST NOT:
     reference each metric delta with the multimodal description: do
     visual change and metric change tell the same story? Discrepancy
     → FAIL.
+
+    Note for the digraph: the single "Determine result" node in the
+    flow chart subsumes Steps 9 AND 10. Both checks happen inside
+    the same evaluation phase — the digraph collapses them so the
+    plan should not split them into two separate nodes.
 
 10. Determine result.
     - FAIL if: any criterion FAIL, OR any non-target surface had an
@@ -541,7 +551,7 @@ readable safety net. Skipping it is forbidden.
 | EC-1 | Dev server unreachable on :9222 | Abort step 2 with instruction to start dev server | n/a |
 | EC-2 | `git stash` is a no-op (tree clean, change committed) | Fallback to temp worktree at `HEAD~N`; mark `baseline_method: fallback` | medium |
 | EC-3 | Change already pushed (`@{u}..HEAD` empty + tree clean) | Abort step 1 (HARD-GATE 8) | n/a |
-| EC-4 | `git stash pop` produces conflicts | Mark FAIL, leave conflict markers in place, instruct user to resolve | n/a |
+| EC-4 | `git stash pop` produces conflicts | Mark FAIL, leave conflict markers in place, instruct user to resolve. **Explicit exception to HARD-GATE 9 cleanup invariant**: when stash pop conflicts, the user's manual resolution IS the cleanup. The skill stops touching the working tree and surfaces the conflict. | n/a |
 | EC-5 | Surface state unreachable (e.g., requires auth) | Add to `unreachable_states:`; do NOT FAIL but cap confidence | medium |
 | EC-6 | Capture lands mid-transition | Wait 2× rAF + transitionend; recapture once; if still dirty, list in `low_quality_frames:` | n/a |
 | EC-7 | JSON metrics and multimodal description disagree | FAIL; describe the divergence in the report | n/a |
@@ -556,11 +566,11 @@ readable safety net. Skipping it is forbidden.
 The skill is considered complete and ready when:
 
 1. `~/projects/skills/visual-verify/SKILL.md` exists, contains the verbatim `<HARD-GATE>` from this spec, the verbatim Checklist, the verbatim `digraph`, and references each `references/*.md` file by name.
-2. Five reference files exist (`baseline-capture.md`, `viewport-matrix.md`, `multimodal-review.md`, `report-schema.md`, plus `codex-tools.md` and `gemini-tools.md`). Each is non-empty and addresses the topic in its name.
+2. Six reference files exist (`baseline-capture.md`, `viewport-matrix.md`, `multimodal-review.md`, `report-schema.md`, `codex-tools.md`, `gemini-tools.md`). Each is non-empty and addresses the topic in its name.
 3. `~/.claude/skills/visual-verify` is a symlink to `~/projects/skills/visual-verify`.
 4. `~/.claude/commands/visual-verify.md` exists, is a thin wrapper that forwards args.
 5. `~/projects/companion/CLAUDE.md` contains the verbatim "Visual-verify rule (STRICT)" section from this spec, in the documented location.
-6. `~/projects/skills/scripts/verify-visual-skills.sh` (or a sibling) reports OK for the new skill: SKILL.md frontmatter parses; HARD-GATE marker present; digraph marker present; all referenced `references/*.md` files exist.
+6. The existing `~/projects/skills/scripts/verify-visual-skills.sh` is **extended in place** to also cover `visual-verify` — the script reports OK for the new skill: SKILL.md frontmatter parses; HARD-GATE marker present; digraph marker present; all referenced `references/*.md` files exist. No new script file is added — the existing script gains visual-verify in its skill list.
 7. `~/projects/skills/README.md` documents the skill and its installation, mirroring the `visual-qa` / `visual-refine` pattern.
 8. Manual smoke test: invoking `/visual-verify` against the running companion app on a working tree with a small UI tweak (e.g., a one-line CSS edit) produces a report at `/tmp/visual-verify-*.md` whose schema matches `references/report-schema.md`, whose checklist completed end-to-end without HARD-GATE violations, and whose final declaration matches the actual rendered state.
 
