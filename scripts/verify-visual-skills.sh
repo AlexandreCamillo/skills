@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # scripts/verify-visual-skills.sh
-# Static integrity checks for the visual-qa and visual-refine skills.
+# Static integrity checks for the visual-qa, visual-refine, and visual-verify skills.
 # Exits 0 on pass with "Result: OK"; nonzero on any failure with "Result: FAIL".
 
 set -u
 
 if [ "${1:-}" = "--version" ]; then
     echo "$0"
-    echo "Static integrity checks for the visual-qa and visual-refine skills."
+    echo "Static integrity checks for the visual-qa, visual-refine, and visual-verify skills."
     exit 0
 fi
 
@@ -18,6 +18,9 @@ QA_SKILL="$QA_DIR/SKILL.md"
 REFINE_SKILL="$REFINE_DIR/SKILL.md"
 QA_REF_DIR="$QA_DIR/references"
 REFINE_REF_DIR="$REFINE_DIR/references"
+VERIFY_DIR="$REPO_ROOT/visual-verify"
+VERIFY_SKILL="$VERIFY_DIR/SKILL.md"
+VERIFY_REF_DIR="$VERIFY_DIR/references"
 
 failures=0
 fail() {
@@ -25,8 +28,8 @@ fail() {
     failures=$((failures + 1))
 }
 
-# 1. Both SKILL.md files exist with valid YAML frontmatter containing name + description
-for f in "$QA_SKILL" "$REFINE_SKILL"; do
+# 1. All SKILL.md files exist with valid YAML frontmatter containing name + description
+for f in "$QA_SKILL" "$REFINE_SKILL" "$VERIFY_SKILL"; do
     if [ ! -f "$f" ]; then
         fail "missing SKILL.md at $f"
         continue
@@ -46,14 +49,14 @@ if not fm or "name" not in fm or "description" not in fm:
 PYEOF
 done
 
-# 2. <HARD-GATE> block in both SKILL.md files
-for f in "$QA_SKILL" "$REFINE_SKILL"; do
+# 2. <HARD-GATE> block in all SKILL.md files
+for f in "$QA_SKILL" "$REFINE_SKILL" "$VERIFY_SKILL"; do
     [ -f "$f" ] || continue
     grep -q "<HARD-GATE>" "$f" 2>/dev/null || fail "missing <HARD-GATE> block in $f"
 done
 
-# 3. digraph block in both SKILL.md files
-for f in "$QA_SKILL" "$REFINE_SKILL"; do
+# 3. digraph block in all SKILL.md files
+for f in "$QA_SKILL" "$REFINE_SKILL" "$VERIFY_SKILL"; do
     [ -f "$f" ] || continue
     grep -q "digraph" "$f" 2>/dev/null || fail "missing digraph block in $f"
 done
@@ -145,7 +148,7 @@ text = open(skill_file).read()
 pattern = re.compile(r"(?:[~/\w./-]*?(?P<skill>[a-z][a-z0-9-]+)/)?references/(?P<name>[a-zA-Z0-9_-]+)\.md")
 sibling_dirs = [
     os.path.join(repo_root, d, "references")
-    for d in ("visual-qa", "visual-refine", "brainstorm-and-execute")
+    for d in ("visual-qa", "visual-refine", "visual-verify", "brainstorm-and-execute")
 ]
 errors = 0
 for m in pattern.finditer(text):
@@ -153,7 +156,7 @@ for m in pattern.finditer(text):
     skill_seg = m.group("skill")
     fname = name + ".md"
     # Try the explicit skill segment first if present.
-    if skill_seg and skill_seg in ("visual-qa", "visual-refine", "brainstorm-and-execute"):
+    if skill_seg and skill_seg in ("visual-qa", "visual-refine", "visual-verify", "brainstorm-and-execute"):
         target = os.path.join(repo_root, skill_seg, "references", fname)
         if os.path.isfile(target):
             continue
@@ -175,6 +178,9 @@ fi
 if ! check_refs_for_skill "$REFINE_SKILL" "$REFINE_REF_DIR"; then
     failures=$((failures + 1))
 fi
+if ! check_refs_for_skill "$VERIFY_SKILL" "$VERIFY_REF_DIR"; then
+    failures=$((failures + 1))
+fi
 
 # 11. No orphan reference files: every *.md under each skill's references/ is mentioned in its SKILL.md.
 check_orphans() {
@@ -191,9 +197,10 @@ check_orphans() {
 }
 check_orphans "$QA_REF_DIR" "$QA_SKILL" "visual-qa"
 check_orphans "$REFINE_REF_DIR" "$REFINE_SKILL" "visual-refine"
+check_orphans "$VERIFY_REF_DIR" "$VERIFY_SKILL" "visual-verify"
 
-# 12. Both SKILL.md files contain the autonomy HARD-GATE clause.
-for f in "$QA_SKILL" "$REFINE_SKILL"; do
+# 12. All SKILL.md files contain the autonomy HARD-GATE clause.
+for f in "$QA_SKILL" "$REFINE_SKILL" "$VERIFY_SKILL"; do
     [ -f "$f" ] || continue
     grep -q "MUST NOT pause for user confirmation" "$f" 2>/dev/null \
         || fail "$f missing the autonomy HARD-GATE clause"
@@ -222,6 +229,14 @@ if [ -f "$REFINE_SKILL" ]; then
         || fail "visual-refine/SKILL.md missing canonical citation anchor '#variation-<id>'"
     grep -q 'Open in dedicated page' "$REFINE_SKILL" 2>/dev/null \
         || fail "visual-refine/SKILL.md missing 'Open in dedicated page' deep-link from index to composite"
+fi
+
+# 15. visual-verify/SKILL.md mentions baseline_method, criteria, multimodal,
+#     PASS-strong, premises, and stash. Locks the verification contract.
+if [ -f "$VERIFY_SKILL" ]; then
+    for term in baseline_method criteria multimodal "PASS-strong" premises stash; do
+        grep -q "$term" "$VERIFY_SKILL" 2>/dev/null || fail "visual-verify/SKILL.md missing required term: $term"
+    done
 fi
 
 if [ "$failures" -eq 0 ]; then
