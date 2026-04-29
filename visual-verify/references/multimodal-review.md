@@ -69,9 +69,63 @@ Notable visual issues:
   - <observation 1, e.g., "title accent-color appears slightly darker
     than design tokens specify, ~#3a8aff vs expected #4a9cff">
   - <observation 2 or "none">
+
+Boundaries observed (REQUIRED — see § Edge enumeration below):
+  - <surface-A>.<edge-name>: <px coordinate>
+  - <surface-B>.<edge-name>: <px coordinate>
+  - shared-boundary <pair-id>: diff = <Δpx> [ok ≤ 2px | MISALIGNED]
+  - ...
 ```
 
-The template fields are required. A field that genuinely does not apply (e.g., "Heading text" on a surface with no heading) is filled with "none" — not omitted.
+The template fields are required. A field that genuinely does not apply (e.g., "Heading text" on a surface with no heading) is filled with "none" — not omitted. The "Boundaries observed" block has a stricter rule: it cannot be filled with "none" — see below.
+
+## Edge enumeration — REQUIRED for every PNG
+
+Why this exists: alignment / column-seam / shared-boundary bugs (a sidebar 40px wider than the titlebar zone above it; a right-panel separator that drifts at high font sizes; a footer hairline that ends 8px before the sidebar's bottom edge) DO NOT show up in per-element font-size or offsetWidth measurements. They only show up when the report explicitly compares **the position of one surface's edge against the position of an adjacent surface's edge**. Without this enumeration, multimodal review is confirmatory ("did the title shrink? yes, ✓") rather than exploratory ("does the column seam still align? let me measure"). The skill's first real-world misses (image-79 / image-80 / image-81 — column-seam misalignment between titlebar zoneLeft and sidebar at slider=20) all happened because no review block enumerated boundaries.
+
+For each PNG, the reviewer MUST:
+
+1. **Enumerate visible surfaces.** List every surface that occupies a non-trivial slice of the captured frame. For each, extract the four edges in CSS pixels: `left`, `right`, `top`, `bottom` — read directly from the metrics JSON sidecar produced alongside the PNG (`getBoundingClientRect()` was captured at snap time).
+
+2. **Identify shared boundaries.** For every pair of surfaces (A, B) where one of A's edges is geometrically adjacent to one of B's edges (within 8px on the same axis), name the pair and compute the absolute difference. Examples of pairs that ALWAYS appear together at desktop viewports:
+   - `titlebar.bottom ↔ main.top` (rows: titlebar caps the chrome; the main column starts immediately below)
+   - `titlebar.zoneLeft.right ↔ sidebar.right` (columns: the titlebar's left zone shares its right edge with the sidebar's right edge — the **column seam** that misaligned in image-81)
+   - `sidebar.right ↔ centerPanel.left` (columns: the seam between sidebar and the workspace area)
+   - `centerPanel.right ↔ rightPanel.left` (columns: when the right panel is open)
+   - `rightPanel.bottom ↔ statusBar.top` (rows: when present)
+   - `footer.left ↔ sidebar.left`, `footer.right ↔ sidebar.right` (the footer at the sidebar's bottom must span exactly the sidebar's width)
+
+3. **Flag any pair where `|edge_A - edge_B| > 2px`** as `MISALIGNED` with the measured Δ. 2px is the slack for sub-pixel rendering at non-integer DPRs; anything larger is a real visual step.
+
+4. **Fill the "Boundaries observed" block** in the per-PNG template (above) with the enumeration. The block CANNOT be filled with "none" — every PNG that contains any UI chrome contains at least one shared boundary. If the reviewer cannot identify any pair, the review is INVALID and FAIL by construction (the surface-detection failed).
+
+### Example — passing case
+
+```
+Boundaries observed:
+  titlebar.left = 0, titlebar.right = 1280, titlebar.bottom = 40
+  sidebar.left = 0, sidebar.right = 320, sidebar.top = 40
+  centerPanel.left = 320, centerPanel.right = 1280, centerPanel.top = 40
+  shared-boundary [titlebar.bottom ↔ sidebar.top]: 40 ↔ 40 = Δ 0 ok
+  shared-boundary [titlebar.bottom ↔ centerPanel.top]: 40 ↔ 40 = Δ 0 ok
+  shared-boundary [sidebar.right ↔ centerPanel.left]: 320 ↔ 320 = Δ 0 ok
+  shared-boundary [titlebar.zoneLeft.right ↔ sidebar.right]: 320 ↔ 320 = Δ 0 ok
+```
+
+### Example — failing case (image-81-style)
+
+```
+Boundaries observed:
+  titlebar.left = 0, titlebar.zoneLeft.right = 280, titlebar.bottom = 40
+  sidebar.left = 0, sidebar.right = 320, sidebar.top = 40
+  shared-boundary [titlebar.zoneLeft.right ↔ sidebar.right]: 280 ↔ 320 = Δ 40 MISALIGNED
+```
+
+The MISALIGNED row makes the bug visible to the report and flips the criterion `boundary-continuity` to FAIL automatically. No further interpretation needed.
+
+### Sourcing the edge values
+
+The metrics JSON sidecar produced in Step 5d / Step 7 of the checklist captures `getBoundingClientRect()` per surface. The reviewer reads that JSON and writes the edges directly. If a surface present in the PNG is missing from the JSON (the metrics-capture function had no selector for it), the run is INVALID — the metrics-capture function must be extended to cover it before re-running. Vibe-estimating edges from the PNG ("looks like ~280px") is forbidden: misalignment under 5% is invisible to the eye but visible at the metric level.
 
 ## Concrete examples
 

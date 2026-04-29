@@ -177,6 +177,104 @@ The table lives here, in `baseline-capture.md`, because Step 3 of the
 checklist references it by name. When the table grows, edit it here; the
 skill does not require a separate config file.
 
+## Layout-class trigger (auto-generated criterion)
+
+A subset of the paths above are **layout-class**: changes to them can
+move column or row boundaries and therefore can introduce
+shared-edge misalignment between adjacent surfaces. The skill auto-
+generates an additional REQUIRED criterion when the diff touches any
+of these paths. The agent CANNOT skip this criterion — it is added
+to the report's `criteria:` frontmatter automatically before Step 4
+allows the agent to proceed.
+
+### Paths that trigger the auto-criterion
+
+```
+apps/desktop/src/renderer/src/components/Layout/**            (any file)
+apps/desktop/src/renderer/src/components/Layout/TitleBarNav/** (any file)
+apps/desktop/src/renderer/src/components/Sidebar/style.module.css
+apps/desktop/src/renderer/src/components/SettingsSidebar/style.module.css
+apps/desktop/src/renderer/src/styles/tokens.css                (token-broadcast)
+**/*.module.css matching grid-template-columns | grid-template-rows |
+                          shared --tb-* / --sidebar-* / --layout-* custom property writes
+**/*.{ts,tsx} that calls setProperty('--tb-*'|'--sidebar-*'|'--layout-*'|'--titlebar-*', …)
+              or returns those values as inline styles
+```
+
+A change touching any of the above is **layout-class**. The detector
+runs against the unified diff produced in Step 5a (post-stash) and
+sets a boolean `layout_class: true` on the report frontmatter.
+
+### Auto-generated criterion
+
+When `layout_class: true`, the skill PREPENDS the following criterion
+to the user-supplied `criteria:` list, with id
+`__auto_boundary_continuity` (the underscore prefix prevents collision
+with user ids):
+
+```yaml
+- surface: layout
+  id: __auto_boundary_continuity
+  assertion: |
+    For every (surface-A, surface-B) pair that shares an axis edge in
+    the rendered DOM at any (viewport, dpr, state) tuple, the absolute
+    difference between A.<edge> and B.<edge> is ≤ 2px in the post phase
+    AND no pair flips from aligned (≤ 2px) in baseline to misaligned
+    (> 2px) in post.
+  measurement: |
+    Each per-PNG "Boundaries observed" block (see references/multimodal-
+    review.md § Edge enumeration) lists every shared-boundary pair with
+    its measured Δ. The criterion PASSes only if every block in the post
+    phase reports Δ ≤ 2px for every pair, AND the set of MISALIGNED
+    pairs in post is a subset of the set in baseline (i.e., the change
+    did not introduce a new misalignment).
+```
+
+### Why prepend, not append
+
+Order matters because the agent writes user-supplied criteria in
+Step 4. If the auto-criterion is appended after the user criteria,
+the agent might believe Step 4 is "done" after writing only the user
+list and skip past. Prepending forces the agent to see the auto-
+criterion FIRST in the frontmatter and to acknowledge it before
+adding their own.
+
+### Pairs the metrics-capture function must cover
+
+The companion-app baseline pairs (the ones the auto-criterion checks
+at every tuple unless `layout_class` is false):
+
+```
+titlebar.bottom            ↔ main.top
+titlebar.zoneLeft.right    ↔ sidebar.right
+titlebar.zoneRight.left    ↔ rightPanel.left
+sidebar.right              ↔ centerPanel.left
+centerPanel.right          ↔ rightPanel.left           (when right panel open)
+sidebar.bottom             ↔ footerAction.bottom        (footer must end at sidebar bottom)
+footerAction.left          ↔ sidebar.left
+footerAction.right         ↔ sidebar.right
+settingsSidebar.right      ↔ settingsContent.left       (settings mode)
+```
+
+Other projects adopting the skill must enumerate their own boundary
+pairs analogously. Without this list, the auto-criterion has nothing
+to measure and degrades silently to "no boundaries detected" — which
+the skill must treat as INVALID, not PASS.
+
+### What a non-layout-class change looks like
+
+A change to `apps/desktop/src/renderer/src/components/Composer/plugins/AttachmentPlugin.tsx`
+is non-layout-class — the file affects how attachments render inside
+the composer but does not move any column/row boundary of the shell.
+For such changes, `layout_class: false` and the auto-criterion is
+NOT prepended. The agent writes only their user-supplied criteria.
+
+The detector errs on the side of inclusion: ambiguous cases (e.g., a
+new component CSS module with `position: absolute` that might be a
+layout primitive or might be local) trigger `layout_class: true`. The
+cost of a spurious auto-criterion is one extra column-pair check; the
+cost of missing a real layout class is image-81 again.
+
 ## Dev-server reload incantation
 
 For the companion app, the dev server runs at `http://localhost:5173` (Vite)

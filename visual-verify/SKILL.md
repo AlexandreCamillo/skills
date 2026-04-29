@@ -29,7 +29,27 @@ This skill MUST NOT:
   concrete terms in the report ("title occupies 18% of viewport height,
   wraps to 2 lines, no overflow"). Vibe descriptions ("looks fine") are
   forbidden. The report's per-surface section must contain at least one
-  multimodal-review block per (viewport × dpr × state) capture.
+  multimodal-review block per (viewport × dpr × state) capture, AND
+  every block MUST include the "Boundaries observed" enumeration
+  (`references/multimodal-review.md` § Edge enumeration) — explicit
+  per-edge px coordinates plus shared-boundary Δs read from the metrics
+  JSON sidecar. A block that omits the enumeration or fills it with
+  "none" / vibe text is INVALID; the run is FAIL by construction.
+
+- Skip the auto-generated `__auto_boundary_continuity` criterion when
+  the diff is layout-class (`references/baseline-capture.md` §
+  Layout-class trigger). The skill MUST detect layout-class via the
+  trigger paths and PREPEND the criterion to the user-supplied
+  `criteria:` list before Step 4 lets the agent proceed. The agent
+  CANNOT remove, edit, or shadow the auto-criterion.
+
+- Skip adjacent-surface co-capture for layout-class diffs. When
+  `layout_class: true`, the matrix is augmented with one frame per
+  shared-boundary pair per (viewport, dpr, state) tuple — the bug
+  class image-81 caught (40px misalignment between titlebar.zoneLeft
+  and sidebar) is invisible in per-surface captures because each
+  surface in isolation looks correct. See `references/viewport-matrix.md`
+  § "Adjacent-surface co-capture".
 
 - Use `setProperty`, `setState`, or any direct-DOM/React shortcut to
   mutate state during capture. State mutation MUST go through the
@@ -121,11 +141,16 @@ Every item below becomes a TodoWrite task at runtime. The items must be executed
     d. If final scope is empty, abort: "no UI surfaces in diff;
        visual-verify not applicable".
 
-4.  Write criteria. BEFORE any capture: write one or more measurable
-    criteria per scoped surface to the report's frontmatter under
-    `criteria:`. Each criterion: id, surface, assertion, measurement.
-    The skill MUST NOT proceed past this step until at least one
-    criterion is written for each scoped surface (HARD-GATE 2).
+4.  Write criteria. BEFORE any capture: detect whether the diff is
+    layout-class (`references/baseline-capture.md` § Layout-class
+    trigger). If yes, set `layout_class: true` in the frontmatter and
+    PREPEND the auto-generated `__auto_boundary_continuity` criterion
+    to `criteria:`. THEN write one or more measurable user-supplied
+    criteria per scoped surface. Each criterion: id, surface,
+    assertion, measurement. The skill MUST NOT proceed past this step
+    until at least one criterion is written for each scoped surface
+    (HARD-GATE 2) AND, when `layout_class: true`, the auto-criterion
+    is present.
 
 5.  Capture baseline. Per references/baseline-capture.md:
     a. git stash push --include-untracked --message
@@ -149,7 +174,18 @@ Every item below becomes a TodoWrite task at runtime. The items must be executed
          - Page.captureScreenshot → /tmp/.../baseline/...
          - Capture metrics JSON for each surface (font-size,
            offsetWidth, scrollWidth, top, left, dimensions of bounding
-           rect, color string for primary text).
+           rect, color string for primary text). The metrics JSON MUST
+           include `getBoundingClientRect()` per surface — the multimodal
+           reviewer reads edges from this in Step 8.
+
+       When `layout_class: true`, ALSO capture the adjacent-surface
+       co-capture frames (`references/viewport-matrix.md` §
+       "Adjacent-surface co-capture") at every (viewport, dpr, state)
+       tuple — one frame per shared-boundary pair, named
+       `pair-<pair-id>-…`, with its own metrics JSON sidecar that
+       contains both surfaces of the pair. These pair frames are the
+       visual ground truth for the auto-criterion
+       `__auto_boundary_continuity`.
 
 6.  Restore working tree. git stash pop, or destroy temp worktree
     (fallback). CDP Page.reload({ ignoreCache: true }) again. Same

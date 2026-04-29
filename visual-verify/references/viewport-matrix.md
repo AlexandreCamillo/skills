@@ -148,6 +148,77 @@ empty-state-1280x800-1.5-no-workspaces-post.metrics.json
 
 The naming is mechanical: a downstream consumer (the multimodal review step, the report writer, a future regression-comparison tool) can pair baseline and post artifacts purely by string substitution `baseline ↔ post`. This is load-bearing — do NOT vary the naming for "readability" or any other reason.
 
+## Adjacent-surface co-capture (REQUIRED for layout-class diffs)
+
+Per-surface captures show ONE surface filling the frame. They make the surface's intrinsic properties visible (font-size, padding, internal alignment) but they CANNOT show misalignment between two surfaces — by definition each frame contains only one of them. The skill's first miss (image-81: a 40px misalignment between the titlebar's `.zoneLeft.right` and the sidebar's `.right`) was invisible in per-surface captures because each surface in isolation looked correct: titlebar zoneLeft = 280px, sidebar = 320px. The bug is in the **pair**.
+
+For any run with `layout_class: true` (see `references/baseline-capture.md` § Layout-class trigger), the matrix is augmented with **adjacent-surface co-capture** frames: one frame per shared-boundary pair, captured at the same `(viewport × dpr × state)` tuples as the per-surface captures. The frame is sized so BOTH surfaces of the pair are fully visible at their natural positions, and the metrics JSON sidecar contains the bounding-rect of EACH surface so the multimodal reviewer (and the auto-criterion) can compute the Δ at the shared edge.
+
+### Pair list (companion app)
+
+The pairs to co-capture, derived from `references/baseline-capture.md` § "Pairs the metrics-capture function must cover":
+
+```
+pair: titlebar-x-sidebar
+  surfaces: [titlebar, sidebar]
+  shared edge: titlebar.zoneLeft.right ↔ sidebar.right
+  framing: full viewport (titlebar at top + sidebar below = top-left
+           quadrant of the chrome — capture entire viewport so the
+           seam at x = sidebar.right is centered horizontally in the
+           PNG)
+
+pair: titlebar-x-main
+  surfaces: [titlebar, main]
+  shared edge: titlebar.bottom ↔ main.top
+  framing: full viewport (the seam is the horizontal line at
+           y = titlebar.bottom across the whole window)
+
+pair: sidebar-x-center
+  surfaces: [sidebar, centerPanel]
+  shared edge: sidebar.right ↔ centerPanel.left
+  framing: full viewport
+
+pair: footer-x-sidebar
+  surfaces: [footerAction, sidebar]
+  shared edges: footerAction.left ↔ sidebar.left,
+                footerAction.right ↔ sidebar.right
+  framing: full viewport (footer is at the sidebar's bottom; the
+           pair captures the corner)
+
+pair: settings-sidebar-x-content
+  surfaces: [settingsSidebar, settingsContent]
+  shared edge: settingsSidebar.right ↔ settingsContent.left
+  framing: full viewport in settings mode
+```
+
+Each pair is captured at every `(viewport, dpr, state)` tuple in the matrix — the same as per-surface captures. Naming convention extends with a `pair-` prefix:
+
+```
+pair-<pair-id>-<wxh>-<dpr>-<state>-<phase>.png
+pair-<pair-id>-<wxh>-<dpr>-<state>-<phase>.metrics.json
+```
+
+Concrete example:
+
+```
+pair-titlebar-x-sidebar-1280x800-1.5-font-slider-max-baseline.png
+pair-titlebar-x-sidebar-1280x800-1.5-font-slider-max-baseline.metrics.json
+pair-titlebar-x-sidebar-1280x800-1.5-font-slider-max-post.png
+pair-titlebar-x-sidebar-1280x800-1.5-font-slider-max-post.metrics.json
+```
+
+### Cost of co-capture
+
+For the default matrix at `layout_class: true` over a layout change with 5 boundary pairs, co-capture adds `5 × 9 × N_states × 2` frames on top of the per-surface matrix. At 3 states per surface, that's 270 additional frames for layout-class runs. The cost is paid once, in exchange for catching the entire class of column-seam / shared-edge bugs that per-surface captures cannot see. Layout-class changes are rare (most diffs are non-layout-class) so the average run is unaffected.
+
+When `layout_class: false`, no co-capture is performed; the matrix is per-surface only.
+
+### How the multimodal reviewer uses pair frames
+
+For each pair frame, the reviewer fills the per-PNG template (per `references/multimodal-review.md`) AND specifically populates the "Boundaries observed" block with both surfaces of the pair plus their shared-edge Δ. A pair frame whose multimodal review block does NOT mention both surfaces by name is treated as an invalid review — the reviewer described one surface and ignored the other, defeating the purpose of co-capture.
+
+The pair frame is the visual ground truth for the auto-criterion `__auto_boundary_continuity` (see `references/baseline-capture.md`). The criterion's "measurement" field reads from the pair frame's metrics JSON; the reviewer cross-references with the visible Δ in the PNG.
+
 ## Mid-transition handling
 
 A captured PNG that lands mid-transition is unreliable: the visible state is partway between two stable points and tells you neither what the start looked like nor what the end looked like. The skill's contract is that every captured frame is at a stable resting state.

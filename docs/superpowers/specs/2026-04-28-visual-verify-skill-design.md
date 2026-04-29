@@ -7,6 +7,8 @@ related:
   - ../../INDEX.md
   - ../../../README.md
   - ../../../visual-qa/SKILL.md
+amendments:
+  - 2026-04-28 boundary-audit hardening (A+B+C+D) — see § "Boundary-audit hardening (post-image-81)"
 ---
 
 # visual-verify — design spec
@@ -573,6 +575,36 @@ The skill is considered complete and ready when:
 6. The existing `~/projects/skills/scripts/verify-visual-skills.sh` is **extended in place** to also cover `visual-verify` — the script reports OK for the new skill: SKILL.md frontmatter parses; HARD-GATE marker present; digraph marker present; all referenced `references/*.md` files exist. No new script file is added — the existing script gains visual-verify in its skill list.
 7. `~/projects/skills/README.md` documents the skill and its installation, mirroring the `visual-qa` / `visual-refine` pattern.
 8. Manual smoke test: invoking `/visual-verify` against the running companion app on a working tree with a small UI tweak (e.g., a one-line CSS edit) produces a report at `/tmp/visual-verify-*.md` whose schema matches `references/report-schema.md`, whose checklist completed end-to-end without HARD-GATE violations, and whose final declaration matches the actual rendered state.
+
+## Boundary-audit hardening (post-image-81 amendment)
+
+The first real-world `/visual-verify` runs (image-78 / image-79 / image-80 / image-81) revealed a bug class the original skill did not catch: shared-edge / column-seam misalignment between adjacent surfaces. image-81 specifically: a 40px misalignment between `titlebar.zoneLeft.right` (280px hard-coded) and `sidebar.right` (320px from `clamp(280px, 18.5rem, 320px)` at slider=20). Each surface in isolation looked correct; the bug was in the pair. The skill's per-PNG multimodal review described elements but did not enumerate boundaries, so the misalignment was visible in the screenshot but invisible in the report.
+
+Four amendments harden against this class:
+
+**A — Edge enumeration in multimodal-review.md (HARD-GATE bullet 3 expansion).** The per-PNG template gains a mandatory "Boundaries observed" block. For every PNG, the reviewer enumerates each visible surface's four edges (left/right/top/bottom in CSS px, read from the metrics JSON sidecar's `getBoundingClientRect()`), identifies every shared-boundary pair, and flags any pair with `|Δ| > 2px` as MISALIGNED. The block cannot be filled with "none"; if no shared boundary is detectable the surface-detection failed and the run is INVALID. Vibe text in the block is a HARD-GATE violation.
+
+**B — Auto-generated `__auto_boundary_continuity` criterion for layout-class diffs.** A new section in `references/baseline-capture.md` defines layout-class trigger paths (Layout/**, Sidebar/style.module.css, SettingsSidebar/style.module.css, tokens.css, any module CSS using grid-template-* or shared --tb-*/--sidebar-*/--layout-*/--titlebar-* custom properties, any TS/TSX writing those properties). When the diff touches a trigger path, the skill PREPENDS the auto-criterion to the user-supplied `criteria:` list before Step 4 lets the agent proceed. Agent cannot remove or shadow the auto-criterion (HARD-GATE addition). Pairs the metrics-capture function must cover are listed in the same reference so the criterion has something concrete to measure.
+
+**C — Adjacent-surface co-capture in viewport-matrix.md.** When `layout_class: true`, the matrix is augmented with one frame per shared-boundary pair per `(viewport, dpr, state)` tuple. Each frame contains BOTH surfaces of the pair so misalignment is visible (not just measurable in metrics). Frames are named `pair-<pair-id>-…` and have parallel metrics JSON sidecars containing both surfaces' bounding rects. For 5 boundary pairs × 9 viewport-DPR combos × 3 states × 2 phases = 270 additional frames per layout-class run; non-layout-class runs are unaffected. The pair frame is the visual ground truth for the auto-criterion's "measurement" field.
+
+**D — Boundary continuity axiom in the consuming project's `CLAUDE.md`.** A new subsection extends the "Visual-verify rule" with the layout-class trigger paths and the boundary-continuity criterion text verbatim. Banned behaviors gain two entries: skipping the auto-criterion on layout-class changes and filling the "Boundaries observed" block with vibe text. The "Why this rule exists" section gains image-81 as the precedent that motivated the axiom.
+
+### Why prepend, not append
+
+If the auto-criterion is appended after the user criteria, the agent might believe Step 4 is "done" after writing only the user list and skip past. Prepending forces the agent to see the auto-criterion FIRST in the frontmatter and to acknowledge it before adding their own.
+
+### Cost / coverage trade-off
+
+The amendments add 270 frames + 1 criterion to layout-class runs (a minority of UI changes). Non-layout-class changes are unaffected. The cost of a spurious classification (treating a non-layout file as layout-class) is one extra column-pair check at every tuple — small. The cost of missing a real layout-class change is image-81 again.
+
+### Files modified by these amendments
+
+- `~/projects/skills/visual-verify/SKILL.md` — HARD-GATE bullet 3 expanded; two new HARD-GATE bullets (auto-criterion, co-capture); checklist Step 4 references layout-class detection; Step 5d describes co-capture.
+- `~/projects/skills/visual-verify/references/multimodal-review.md` — new "Edge enumeration" section; per-PNG template gains the "Boundaries observed" block; example PASS / FAIL blocks; rule against vibe-estimating edges from PNG.
+- `~/projects/skills/visual-verify/references/baseline-capture.md` — new "Layout-class trigger" section; auto-criterion definition; pair list for the companion app; ambiguous-case rule.
+- `~/projects/skills/visual-verify/references/viewport-matrix.md` — new "Adjacent-surface co-capture" section; pair list with framing rules; naming convention extension; cost note; reviewer instructions for pair frames.
+- `~/projects/companion/CLAUDE.md` — new "Boundary continuity axiom" subsection; layout-class trigger paths; criterion text; two new banned behaviors; image-81 added to the "Why this rule exists" precedent list.
 
 ## Out of scope (will NOT be implemented in this work)
 
