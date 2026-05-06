@@ -18,10 +18,16 @@ This skill MUST NOT:
   checkpoint AND `git stash push` in the gate-failure rollback path.
 - Skip any item in the 8-phase checklist below.
 - Skip any of the 5-step decision protocol for any decision in Phase 2.
+- Take a Phase 2 decision in the orchestrator itself. Every Phase 2 decision
+  MUST be dispatched to a fresh subagent per `references/per-decision-subagent-prompt.md`.
+  The orchestrator enumerates options and validates the returned file; it does
+  NOT score options or pick a winner.
 - Edit `rubric.md` after Phase 1 completes.
 - Mark a decision as "obvious" and skip the pros/cons table or scoring.
 - Continue past the wall-clock budget. Budget exhaustion aborts cleanly.
 - Continue past 3 spec-review cycles or 2 plan-review cycles. Exhaustion aborts.
+- Continue past 1 retry per decision-subagent dispatch. Second failure aborts
+  with `outcome: decision-subagent-failed`.
 - Modify any file in this skill's source tree (`brainstorm-and-execute/`,
   `~/.claude/skills/brainstorm-and-execute/`, `~/.claude/commands/`).
 - Run `visual-qa` or `visual-refine` automatically. Different domain; user
@@ -78,6 +84,9 @@ memory.
 - `references/invariants.md` — the four hard invariants (HEAD preservation,
   gate-between-waves, budget cap, bounded retries).
 - `references/decision-template.md` — the per-decision file format.
+- `references/per-decision-subagent-prompt.md` — the prompt template the
+  orchestrator uses to dispatch one fresh subagent per Phase 2 decision, and
+  the validation checklist applied to the returned file.
 - `references/rubric-template.md` — the rubric format and the two example rubrics.
 - `references/pros-cons-scoring.md` — 0/1/2/3 anchors per criterion.
 - `references/plan-schema.md` — the YAML contract for Phase 4 output.
@@ -108,10 +117,35 @@ appropriate `outcome` and write the run report.
 
 3. **Phase 2 — Autonomous Brainstorm** (skip if --spec or --plan). Mirror
    `superpowers:brainstorming`'s checklist but replace every "ask the user" gate
-   with the 5-step decision protocol from `decision-template.md`. Decision points
-   covered (minimum): scope decomposition; clarifying questions on purpose,
-   constraints, success criteria, edge cases; approach selection; per-section
-   design choices. Persist each as `decisions/<prompt-slug>/NN-<decision-slug>.md`.
+   with a fresh-subagent dispatch per `references/per-decision-subagent-prompt.md`.
+   Decision points covered (minimum): scope decomposition; clarifying questions
+   on purpose, constraints, success criteria, edge cases; approach selection;
+   per-section design choices.
+
+   **Per-decision protocol.** For each decision:
+   1. Orchestrator frames the question in one closed-form sentence and
+      enumerates 2–4 candidate options with one-line labels (always include
+      "do nothing / defer" when applicable).
+   2. Orchestrator gathers evidence pointers (3–8 absolute paths or named
+      patterns from CLAUDE.md / docs / existing code).
+   3. Orchestrator dispatches a FRESH subagent with the prompt template in
+      `references/per-decision-subagent-prompt.md`. The subagent reads the
+      rubric, the global user-decision-profile memory at
+      `~/.claude/memory/user_decision_profile.md` (applies across every
+      project — falls back to the rubric alone if the file does not exist),
+      the evidence pointers, scores per the rubric, and writes a single
+      decision file at `decisions/<prompt-slug>/NN-<decision-slug>.md`.
+   4. Orchestrator validates the returned file (frontmatter, sections,
+      scoring math, single-sentence question + rationale, chosen option
+      matches the rubric tie-break). On format failure, ONE retry with the
+      specific failure cited; on second failure abort with
+      `outcome: decision-subagent-failed`.
+   5. Orchestrator does NOT veto the chosen option. The rubric is frozen; if
+      the choice seems wrong, that is a Phase 1 design problem.
+
+   The orchestrator NEVER scores or picks options on its own — that
+   reintroduces the same-context bias this protocol is built to avoid.
+
    Output the spec to `docs/superpowers/specs/YYYY-MM-DD-<prompt-slug>-design.md`.
    HEAD checkpoint at the end (soft-reset any subagent commits).
 
