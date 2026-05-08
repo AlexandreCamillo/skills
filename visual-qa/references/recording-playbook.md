@@ -36,9 +36,29 @@ Connect over `http://localhost:9222` and find the page by URL substring. Do not 
 
 ```javascript
 const puppeteer = require('puppeteer-core');
-const browser = await puppeteer.connect({ browserURL: 'http://localhost:9222' });
+const browser = await puppeteer.connect({
+  browserURL: 'http://localhost:9222',
+  defaultViewport: null,
+  protocolTimeout: 180_000,
+});
 const page = (await browser.pages()).find(p => p.url().includes('YOUR_APP_URL'));
 ```
+
+**`protocolTimeout: 180_000` is mandatory, not optional.** Puppeteer's default is 30 s, which is enough for a normal Chrome screenshot but fails routinely on Electron targets exposed across a virtualisation boundary (WSL2 → Windows TCP-forward, Docker port-publish, a Linux VM inside macOS). The Electron compositor on the Windows side can take 5 – 60 s to flush a single CDP `Page.captureScreenshot` payload through the WSL2 bridge, and the chrome-devtools-mcp plugin's own browser session is a separate target that **does not** share state with `:9222`. Connecting through the plugin's `list_pages` will surface only its internal pages, not the Electron renderer; always use `puppeteer-core.connect` directly when the target is a host-Electron app.
+
+**Symptoms when the timeout is wrong:**
+- `ProtocolError: Page.captureScreenshot timed out` after exactly 30 s — the puppeteer default fired.
+- The first screenshot succeeds and subsequent ones hang — the Electron compositor is blocked because the BrowserWindow lost foreground focus; `await page.bringToFront()` before the first `page.screenshot()` mitigates this on most desktop platforms.
+- Connection succeeds but `browser.pages()` returns an empty array — the Electron BrowserWindow was closed mid-run; relaunch the dev server and re-probe `/json/list` for a `page` target before retrying.
+
+**Sanity probe before recording:** verify both the browser-level CDP and at least one renderer page target are reachable.
+
+```bash
+curl -sS http://localhost:9222/json/version | head -c 200      # confirms Electron CDP responds
+curl -sS http://localhost:9222/json/list | jq '.[] | select(.type=="page") | .url'
+```
+
+If `/json/version` returns Electron metadata but `/json/list` returns `[]`, the BrowserWindow has been destroyed (common after a long-idle WSL session). Restart the app before recording — there is no recovery path from inside the script.
 
 ### Capture loop
 
